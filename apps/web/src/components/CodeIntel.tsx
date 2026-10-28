@@ -7,6 +7,14 @@
  *   popover → the peek window (PeekNavigator.tsx): the definition, its
  *   implementations and every use on the left, the chosen file on the right, where hover and ⌘-click
  *   work again and step through a history of their own;
+ * - ⌘⇧-click it (Ctrl⇧-click elsewhere) → straight to what the peek would
+ *   open on, with no window: the diff scrolls to it (unfolding the file and
+ *   its unchanged context as needed) when it's on the head side of a file
+ *   this review changes; anywhere else, or with several implementations to
+ *   choose from, the peek opens instead. Each jump is kept in a short
+ *   history of `(path, side, line)` anchors that ⌘[ / ⌘] and a mouse's
+ *   back/forward buttons step through. The reader starts every jump, so
+ *   it's no exception to "never auto-scroll" (ARCHITECTURE.md);
  * - double-click it → every place it appears in that file is marked, from
  *   the server's `documentHighlight` (one file, so cheap); a click elsewhere
  *   or Esc clears them.
@@ -31,15 +39,36 @@ import type { LspDefinition, LspFile, LspHighlight, LspHover, LspLanguage, LspRe
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { callApi } from '../lib/apiClient.ts';
-import { cached, getHoverDelay, getHoverEnabled, getImplementationJump, IS_MAC, PEEK_KEY, placement } from '../lib/codeIntel.ts';
+import {
+  cached,
+  getHoverDelay,
+  getHoverEnabled,
+  getImplementationJump,
+  IS_MAC,
+  JUMP_KEY,
+  PEEK_KEY,
+  placement,
+} from '../lib/codeIntel.ts';
+import { isEditableTarget, resolveEventTarget } from '../lib/keymapGuard.ts';
 import { useReview } from '../state/ReviewContext.tsx';
 import { Markdown } from './Markdown.tsx';
-import { otherImplementations, PeekNavigator, type Load, type Nav, type NavEntry } from './PeekNavigator.tsx';
+import {
+  otherImplementations,
+  PeekNavigator,
+  useHistorySteps,
+  type Load,
+  type Nav,
+  type NavEntry,
+} from './PeekNavigator.tsx';
 
 /** Grace to move the pointer from the token onto the popover. */
 const CLOSE_DELAY_MS = 150;
 /** How long the line a jump lands on stays highlighted. */
 const JUMP_HIGHLIGHT_MS = 1_600;
+/** How long "No definition found" stays by the token. */
+const MISSING_MS = 1_500;
+/** Anchors kept in the diff's jump history. */
+const JUMP_HISTORY_LIMIT = 50;
 const SUPPORTED = /\.(?:[cm]?[jt]sx?|php)$/i;
 /** A token worth asking about has a letter, `_` or `$` in it — not `(`, `=>`, `42`. */
 const NAME_LIKE = /[\p{L}_$]/u;
@@ -54,6 +83,62 @@ const highlightsCache = new Map<string, Promise<LspHighlight[]>>();
 type TokenProps = TokenEventBase & Partial<Pick<DiffTokenEventBaseProps, 'side'>>;
 type TokenContext = { item: { id: string } };
 type HeadPosition = { line: number; character: number };
+type PositionQuery = { path: string; line: number; character: number };
+
+/** A place in the diff a jump lands on or leaves from, like the anchor updates restore. */
+type Anchor = { path: string; side: 'additions'; line: number };
+type Jumps = { entries: Anchor[]; index: number };
+
+function sameAnchor(a: Anchor | undefined, b: Anchor): boolean {
+  return a !== undefined && a.path === b.path && a.side === b.side && a.line === b.line;
+}
+
+/** What a rendered file in the diff (`@pierre/diffs`' VirtualizedFileDiff) offers for unfolding a line. */
+type DiffInstance = {
+  isLineRenderable: (line: number) => boolean;
+  revealLine: (line: number) => boolean;
+  expandHunk: (hunkIndex: number, direction: 'up' | 'down' | 'both', count?: number) => void;
+};
+
+function isDiffInstance(value: unknown): value is DiffInstance {
+  return typeof value === 'object' && value !== null && 'revealLine' in value && 'isLineRenderable' in value && 'expandHunk' in value;
+}
+
+/** Resolves true once `ready()` holds, checked every frame, or false after `ms`. */
+function untilReady(ready: () => boolean, ms = 3_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const until = performance.now() + ms;
+    const check = () => {
+      if (ready()) resolve(true);
+      else if (performance.now() > until) resolve(false);
+      else requestAnimationFrame(check);
+    };
+    check();
+  });
+}
+
+function nextFrame(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+// An answer saying the server is off is dropped from the cache, so turning it on takes effect.
+function definitionOf(reviewId: string, key: string, query: PositionQuery) {
+  const answer = cached(definitionCache, key, () => callApi('getDefinition', { params: [reviewId], query }));
+  answer.then(({ off }) => off !== null && definitionCache.delete(key), () => undefined);
+  return answer;
+}
+
+function implementationsOf(reviewId: string, key: string, query: PositionQuery) {
+  const answer = cached(implementationsCache, key, () => callApi('getImplementations', { params: [reviewId], query }));
+  answer.then(({ off }) => off !== null && implementationsCache.delete(key), () => undefined);
+  return answer;
+}
+
+function referencesOf(reviewId: string, key: string, query: PositionQuery) {
+  const answer = cached(referencesCache, key, () => callApi('getReferences', { params: [reviewId], query }));
+  answer.then(({ off }) => off !== null && referencesCache.delete(key), () => undefined);
+  return answer;
+}
 
 /** Where a token sits on the head side, or null when it only exists in the base. */
 function headPosition(props: TokenProps): HeadPosition | null {
@@ -154,7 +239,7 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
   onPostRender: (node: HTMLElement, instance: unknown, phase: PostRenderPhase, context: TokenContext) => void;
   overlay: React.ReactNode;
 } {
-  const { review, fileList, items, codeViewRef } = useReview();
+  const { review, fileList, items, codeViewRef, expandFileForNavigation } = useReview();
   const reviewId = review?.id ?? '';
   const blobs = useMemo(() => new Map(fileList.map((f) => [f.path, f.newBlob])), [fileList]);
 
@@ -171,6 +256,19 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
   /** The double-clicked symbol's places in its file, kept marked across re-renders. */
   const occurrences = useRef<{ path: string; ranges: LspHighlight[] } | null>(null);
   const occurrencesRequest = useRef<AbortController | null>(null);
+  /** Each file's rendered instance in the diff, to unfold a jump's line in. */
+  const instances = useRef(new Map<string, DiffInstance>());
+  /** Where in the diff the open peek window was opened from, for the jump history. */
+  const peekFrom = useRef<Anchor | null>(null);
+  const [jumps, setJumps] = useState<Jumps | null>(null);
+  const jumpsRef = useRef(jumps);
+  jumpsRef.current = jumps;
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  /** Bumped by each jump and each direct lookup, so a slower earlier one gives way. */
+  const revealSeq = useRef(0);
+  const directSeq = useRef(0);
+  const [missing, setMissing] = useState<{ rect: DOMRect; text: string } | null>(null);
 
   const keyOf = useCallback(
     (t: Target) => `${reviewId}:${t.path}:${t.version}:${t.pos.line}:${t.tokenStart}`,
@@ -285,9 +383,10 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
   /**
    * Definition and uses of `target`, in the peek window: a new window from the
    * diff, or the next step of the open one's history from inside its preview.
+   * `selected`, when given, is what it opens on instead of the usual pick.
    */
   const openPeek = useCallback(
-    (target: Target) => {
+    (target: Target, selected: NavEntry['selected'] = null) => {
       cancelHover();
       setCard(null);
       entryIds.current += 1;
@@ -298,9 +397,10 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
         definition: LOADING,
         implementations: LOADING,
         references: LOADING,
-        selected: null,
+        selected,
         off: null,
       };
+      if (!target.inPreview) peekFrom.current = { path: target.path, side: 'additions', line: target.pos.line };
       setNav((n) =>
         target.inPreview && n !== null
           ? { ...n, entries: [...n.entries.slice(0, n.index + 1), entry], index: n.index + 1 }
@@ -321,41 +421,185 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
         });
       const key = keyOf(target);
       const query = { path: target.path, line: target.pos.line, character: target.pos.character };
-      cached(definitionCache, key, () => callApi('getDefinition', { params: [reviewId], query })).then(
-        ({ definition, off }) => {
-          if (off !== null) definitionCache.delete(key);
-          update((e) => ({ ...e, off: e.off ?? off, definition: { status: 'ready', value: definition } }));
-        },
+      definitionOf(reviewId, key, query).then(
+        ({ definition, off }) =>
+          update((e) => ({ ...e, off: e.off ?? off, definition: { status: 'ready', value: definition } })),
         (err: unknown) => update((e) => ({ ...e, definition: failed(err) })),
       );
-      cached(implementationsCache, key, () => callApi('getImplementations', { params: [reviewId], query })).then(
-        ({ implementations, off }) => {
-          if (off !== null) implementationsCache.delete(key);
-          update((e) => ({ ...e, off: e.off ?? off, implementations: { status: 'ready', value: implementations } }));
-        },
+      implementationsOf(reviewId, key, query).then(
+        ({ implementations, off }) =>
+          update((e) => ({ ...e, off: e.off ?? off, implementations: { status: 'ready', value: implementations } })),
         (err: unknown) => update((e) => ({ ...e, implementations: failed(err) })),
       );
-      cached(referencesCache, key, () => callApi('getReferences', { params: [reviewId], query })).then(
-        ({ references, off }) => {
-          if (off !== null) referencesCache.delete(key);
-          update((e) => ({ ...e, off: e.off ?? off, references: { status: 'ready', value: references } }));
-        },
+      referencesOf(reviewId, key, query).then(
+        ({ references, off }) =>
+          update((e) => ({ ...e, off: e.off ?? off, references: { status: 'ready', value: references } })),
         (err: unknown) => update((e) => ({ ...e, references: failed(err) })),
       );
     },
     [cancelHover, keyOf, reviewId],
   );
 
+  /**
+   * Brings `line` (head side) of the diff's `path` into view and marks it for
+   * a moment: the file unfolds if folded, and the unchanged lines around it
+   * if it's outside the shown hunks, which first loads the whole file.
+   */
+  const reveal = useCallback(
+    async (path: string, line: number) => {
+      const view = codeViewRef.current;
+      const item = itemsRef.current.find((i) => i.id === path);
+      if (view === null || item === undefined) return;
+      revealSeq.current += 1;
+      const seq = revealSeq.current;
+      const live = () => seq === revealSeq.current;
+      // Its real patch replaces the placeholder in place (ReviewContext.tsx).
+      await untilReady(() => !live() || item.fileDiff.cacheKey?.endsWith(':loading') !== true);
+      if (!live()) return;
+      if (item.collapsed === true) {
+        expandFileForNavigation(path);
+        await nextFrame();
+        await nextFrame();
+      }
+      // Context only unfolds in a mounted file: bring it in first.
+      if (!instances.current.has(path)) view.scrollTo({ type: 'item', id: path, align: 'start' });
+      await untilReady(() => !live() || instances.current.has(path));
+      const instance = () => instances.current.get(path);
+      if (!live()) return;
+      if (instance()?.isLineRenderable(line) === false) {
+        // Unchanged lines need the whole file: a zero-line expansion loads it,
+        // and `revealLine` can unfold the line once it's in.
+        instance()?.expandHunk(0, 'up', 0);
+        await untilReady(() => !live() || instance()?.isLineRenderable(line) === true || instance()?.revealLine(line) === true);
+        await untilReady(() => !live() || instance()?.isLineRenderable(line) === true, 1_000);
+        // The unfolded rows are laid out on the next render pass.
+        await nextFrame();
+        await nextFrame();
+      }
+      if (!live()) return;
+      const shown = instance()?.isLineRenderable(line) ?? false;
+      view.scrollTo(
+        shown
+          ? { type: 'line', id: path, lineNumber: line, side: 'additions', align: 'center' }
+          : { type: 'item', id: path, align: 'start' },
+      );
+      // Mark the landing line for a moment with the line selection, unless the
+      // reader has one of their own (a comment being drafted) to keep.
+      if (!shown || view.getSelectedLines() !== null) return;
+      const mark = { id: path, range: { start: line, end: line, side: 'additions' as const } };
+      view.setSelectedLines(mark);
+      window.setTimeout(() => {
+        const current = view.getSelectedLines();
+        if (current?.id === mark.id && current.range.start === mark.range.start && current.range.end === mark.range.end) {
+          view.clearSelectedLines();
+        }
+      }, JUMP_HIGHLIGHT_MS);
+    },
+    [codeViewRef, expandFileForNavigation],
+  );
+
+  /** Leaves `from` for `to` in the diff, recorded in the jump history. */
+  const go = useCallback(
+    (to: Anchor, from: Anchor | null) => {
+      setNav(null);
+      setCard(null);
+      setJumps((j) => {
+        const kept = j === null ? [] : j.entries.slice(0, j.index + 1);
+        if (from !== null && !sameAnchor(kept.at(-1), from)) kept.push(from);
+        if (!sameAnchor(kept.at(-1), to)) kept.push(to);
+        const entries = kept.slice(-JUMP_HISTORY_LIMIT);
+        return entries.length < 2 ? j : { entries, index: entries.length - 1 };
+      });
+      void reveal(to.path, to.line);
+    },
+    [reveal],
+  );
+
+  const stepJump = useCallback(
+    (delta: 1 | -1) => {
+      const j = jumpsRef.current;
+      if (j === null) return;
+      const index = Math.max(0, Math.min(j.entries.length - 1, j.index + delta));
+      const at = j.entries[index];
+      if (index === j.index || at === undefined) return;
+      setJumps({ ...j, index });
+      void reveal(at.path, at.line);
+    },
+    [reveal],
+  );
+
+  const showMissing = useCallback((target: Target, text: string) => {
+    setMissing({ rect: target.element.getBoundingClientRect(), text });
+  }, []);
+
+  /**
+   * ⌘⇧-click: straight to what the peek would open on. In the diff when it's
+   * a head-side line of a file this review changes; else, or when there's a
+   * real choice to make, the peek opens (or re-targets, from its preview).
+   */
+  const goDirect = useCallback(
+    (target: Target) => {
+      cancelHover();
+      setCard(null);
+      setMissing(null);
+      directSeq.current += 1;
+      const seq = directSeq.current;
+      const element = target.element;
+      element.setAttribute('data-lsp-wait', '');
+      const key = keyOf(target);
+      const query = { path: target.path, line: target.pos.line, character: target.pos.character };
+      Promise.all([definitionOf(reviewId, key, query), implementationsOf(reviewId, key, query)])
+        .then(([{ definition, off }, { implementations, off: implementationsOff }]) => {
+          if (seq !== directSeq.current) return;
+          // A switched-off server: the peek says so and links to Settings.
+          if ((off ?? implementationsOff) !== null) return openPeek(target);
+          const others = (implementations?.references ?? []).filter(
+            (i) => i.ref !== definition?.ref || i.line !== definition.line,
+          );
+          // Clicked on the definition itself: nothing to go to but what's behind it.
+          const onItself = definition !== null && definition.ref === target.path && definition.line === target.pos.line;
+          const [only] = others;
+          const to =
+            only !== undefined && others.length === 1 && (getImplementationJump() || definition === null || onItself)
+              ? only
+              : definition !== null && !onItself
+                ? definition
+                : null;
+          if (to === null) {
+            if (definition === null && others.length === 0) showMissing(target, 'No definition found');
+            else openPeek(target);
+            return;
+          }
+          const item = itemsRef.current.find((i) => i.id === to.ref);
+          if (to.inReview && item !== undefined && item.fileDiff.type !== 'deleted') {
+            const from: Anchor | null = target.inPreview
+              ? peekFrom.current
+              : { path: target.path, side: 'additions', line: target.pos.line };
+            go({ path: to.ref, side: 'additions', line: to.line }, from);
+          } else {
+            openPeek(target, { ref: to.ref, line: to.line });
+          }
+        })
+        .catch((err: unknown) => {
+          if (seq === directSeq.current) showMissing(target, `Couldn't look it up: ${err instanceof Error ? err.message : String(err)}`);
+        })
+        .finally(() => element.removeAttribute('data-lsp-wait'));
+    },
+    [cancelHover, go, keyOf, openPeek, reviewId, showMissing],
+  );
+
   const click = useCallback(
     (target: Target | null, event: MouseEvent) => {
       if (!(IS_MAC ? event.metaKey : event.ctrlKey)) return;
       // A drag that ends on a token is a text selection, not a click on it.
-      if (window.getSelection()?.isCollapsed === false) return;
+      // (⌘⇧'s mousedown never selects, see below, so whatever is selected is older.)
+      if (!event.shiftKey && window.getSelection()?.isCollapsed === false) return;
       if (target === null) return;
       event.preventDefault();
-      openPeek(target);
+      if (event.shiftKey) goDirect(target);
+      else openPeek(target);
     },
-    [openPeek],
+    [goDirect, openPeek],
   );
 
   const onTokenEnter = useCallback(
@@ -411,14 +655,16 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
   );
 
   // Rows are rebuilt as the diff scrolls and re-renders: marks follow them.
-  const onPostRender = useCallback((node: HTMLElement, _instance: unknown, phase: PostRenderPhase, context: TokenContext) => {
+  const onPostRender = useCallback((node: HTMLElement, instance: unknown, phase: PostRenderPhase, context: TokenContext) => {
     const path = context.item.id;
     if (phase === 'unmount') {
       if (containers.current.get(path) === node) containers.current.delete(path);
+      if (instances.current.get(path) === instance) instances.current.delete(path);
       unmarkOccurrences(node);
       return;
     }
     containers.current.set(path, node);
+    if (isDiffInstance(instance)) instances.current.set(path, instance);
     const shown = occurrences.current;
     if (shown === null) return;
     unmarkOccurrences(node);
@@ -489,36 +735,10 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
     return () => origin.removeAttribute('data-lsp-origin');
   }, [origin]);
 
+  // "Go to it in this review": the same jump, from where the peek was opened.
   const jump = useCallback(
-    (path: string, line: number) => {
-      setNav(null);
-      setCard(null);
-      const item = items.find((i) => i.id === path);
-      if (item === undefined) return;
-      // Only a line inside a shown hunk can be scrolled to; else the file's top.
-      const shown = item.collapsed !== true && item.fileDiff.hunks.some(
-        (h) => line >= h.additionStart && line < h.additionStart + h.additionCount,
-      );
-      const view = codeViewRef.current;
-      if (view === null) return;
-      view.scrollTo(
-        shown
-          ? { type: 'line', id: path, lineNumber: line, side: 'additions', align: 'center' }
-          : { type: 'item', id: path, align: 'start' },
-      );
-      // Mark the landing line for a moment with the line selection, unless the
-      // reader has one of their own (a comment being drafted) to keep.
-      if (!shown || view.getSelectedLines() !== null) return;
-      const mark = { id: path, range: { start: line, end: line, side: 'additions' as const } };
-      view.setSelectedLines(mark);
-      window.setTimeout(() => {
-        const current = view.getSelectedLines();
-        if (current?.id === mark.id && current.range.start === mark.range.start && current.range.end === mark.range.end) {
-          view.clearSelectedLines();
-        }
-      }, JUMP_HIGHLIGHT_MS);
-    },
-    [codeViewRef, items],
+    (path: string, line: number) => go({ path, side: 'additions', line }, peekFrom.current),
+    [go],
   );
 
   const select = useCallback(
@@ -537,6 +757,55 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
     setNav(null);
     setCard(null);
   }, []);
+
+  // One set of back/forward entries for both histories: the peek's while it's
+  // open, the diff's jumps otherwise. Back past a jump history's start ends it.
+  useHistorySteps(
+    (delta) => (nav !== null ? step(delta) : stepJump(delta)),
+    () => (nav !== null ? closeNav() : setJumps(null)),
+    nav !== null ? nav.index === 0 : (jumps?.index ?? 0) === 0,
+    nav !== null || jumps !== null,
+  );
+
+  // A new review starts with no jumps to step through.
+  useEffect(() => setJumps(null), [reviewId]);
+
+  // ⌘[ / ⌘] step the diff's jumps; the peek takes them while it's open.
+  useEffect(() => {
+    if (jumps === null || nav !== null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(IS_MAC ? e.metaKey : e.ctrlKey) || e.shiftKey || e.altKey || (e.key !== '[' && e.key !== ']')) return;
+      if (e.defaultPrevented || isEditableTarget(resolveEventTarget(e))) return;
+      e.preventDefault();
+      stepJump(e.key === '[' ? -1 : 1);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [jumps, nav, stepJump]);
+
+  // ⌘⇧'s mousedown on a name would extend the text selection to it; it's a jump instead.
+  useEffect(() => {
+    const onMouseDown = (e: MouseEvent) => {
+      if (e.button !== 0 || !e.shiftKey || !(IS_MAC ? e.metaKey : e.ctrlKey)) return;
+      if (e.composedPath().some((n) => n instanceof Element && n.hasAttribute('data-char'))) e.preventDefault();
+    };
+    window.addEventListener('mousedown', onMouseDown, { capture: true });
+    return () => window.removeEventListener('mousedown', onMouseDown, { capture: true });
+  }, []);
+
+  // "No definition found" stays a moment, and goes at once on a scroll or click.
+  useEffect(() => {
+    if (missing === null) return;
+    const dismiss = () => setMissing(null);
+    const timer = window.setTimeout(dismiss, MISSING_MS);
+    window.addEventListener('scroll', dismiss, { capture: true, passive: true });
+    window.addEventListener('pointerdown', dismiss, { capture: true });
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('scroll', dismiss, { capture: true });
+      window.removeEventListener('pointerdown', dismiss, { capture: true });
+    };
+  }, [missing]);
 
   const overlay = (
     <>
@@ -561,6 +830,18 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
             onPointerLeave={scheduleClose}
             onPeek={() => openPeek(card.target)}
           />,
+          document.body,
+        )}
+      {missing !== null &&
+        createPortal(
+          <div
+            role="status"
+            data-code-intel=""
+            style={placement(missing.rect, 240, 28)}
+            className="pointer-events-none fixed z-[60] max-w-60 truncate rounded-md bg-chrome-bg-raised px-2.5 py-1 text-xs text-chrome-fg-muted shadow-chrome ring-1 ring-chrome-fg/10"
+          >
+            {missing.text}
+          </div>,
           document.body,
         )}
     </>
@@ -604,7 +885,7 @@ function HoverPopover({
         >
           Definition and uses
         </button>
-        <span>{PEEK_KEY}-click</span>
+        <span>{PEEK_KEY}-click · {JUMP_KEY}-click to go</span>
         <span className="ml-auto font-mono">{card.hover.server}</span>
       </div>
     </div>

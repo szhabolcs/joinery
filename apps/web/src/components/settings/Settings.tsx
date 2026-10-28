@@ -39,6 +39,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ApiError, callApi } from '../../lib/apiClient.ts';
 import {
   MAX_HOVER_DELAY_MS,
+  JUMP_KEY,
   PEEK_KEY,
   setHoverDelay,
   setHoverEnabled,
@@ -384,7 +385,7 @@ function HoverCardsRow(): React.JSX.Element {
   const on = useHoverEnabled();
   const delay = useHoverDelay();
   return (
-    <Row icon={<MousePointer2 strokeWidth={1.75} />} title="Show types on hover" detail={`Signature and docs when the pointer rests on a name; ${PEEK_KEY}-click jumps either way`}>
+    <Row icon={<MousePointer2 strokeWidth={1.75} />} title="Show types on hover" detail={`Signature and docs when the pointer rests on a name; ${PEEK_KEY}-click and ${JUMP_KEY}-click work either way`}>
       {on && (
         // A valid number is saved as it's typed; an empty or half-typed field snaps back to the saved delay on blur.
         <NumberField.Root
@@ -420,7 +421,7 @@ function ImplementationJumpRow(): React.JSX.Element {
     <Row
       icon={<Layers strokeWidth={1.75} />}
       title="Open the only implementation"
-      detail={`When a ${PEEK_KEY}-clicked interface has just one implementation, show that first`}
+      detail={`When a ${PEEK_KEY}- or ${JUMP_KEY}-clicked interface has just one implementation, go to that first`}
     >
       <ChromeSwitch checked={on} onCheckedChange={setImplementationJump} label="Open the only implementation" />
     </Row>

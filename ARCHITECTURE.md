@@ -71,6 +71,7 @@ packages/core  zod schemas shared by all three
 - **Never automatic:**
   - Never switch revision automatically. Remote movement shows a chip.
   - Never auto-scroll. Updates restore a `(path, side, line)` anchor, not a pixel offset.
+  - A scroll the reader starts (⌘⇧-click to a definition, stepping its jump history) isn't automatic. Jumps keep the same kind of anchor.
   - Never resolve, delete or hide a thread.
   - Refresh is staged ("N files updated · Refresh"), never applied under the cursor.
 - **Remote ahead (`0 N`) and diverged states get a loud banner.** Reviewing stale code is the worst failure.
