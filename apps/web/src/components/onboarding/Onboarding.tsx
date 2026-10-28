@@ -31,6 +31,7 @@ import {
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { callApi } from '../../lib/apiClient.ts';
+import { JUMP_KEY, PEEK_KEY } from '../../lib/codeIntel.ts';
 import { closeOnboarding, useOnboardingOpen } from '../../lib/onboarding.ts';
 import { listThemeOptions } from '../../lib/themes.ts';
 import { useHomeData } from '../../state/HomeData.tsx';
@@ -498,7 +499,7 @@ function ToolsStep(): React.JSX.Element {
           {rows(FORGES)}
         </ToolGroup>
         {data !== null && data.lsp.length > 0 && (
-          <ToolGroup title="Language servers" about="Show types and docs on hover, and jump to definitions and uses, right in the diff.">
+          <ToolGroup title="Language servers" about={`Show types and docs on hover, right in the diff. ${PEEK_KEY}-click a name for its definition and uses, ${JUMP_KEY}-click to go straight to it.`}>
             {data.lsp.map((row) => (
               <LanguageServerTool key={row.language} row={row} onChanged={reload} />
             ))}

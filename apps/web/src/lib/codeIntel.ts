@@ -9,18 +9,26 @@ const CACHE_LIMIT = 2_000;
 
 export const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 export const PEEK_KEY = IS_MAC ? '⌘' : 'Ctrl';
+/** Held with the click that goes straight to the definition, skipping the peek window. */
+export const JUMP_KEY = IS_MAC ? '⌘⇧' : 'Ctrl+Shift';
 
 /**
  * Injected into each file's shadow root alongside the card CSS: the token
  * under the pointer reads as a link while the peek modifier is held, the one
- * a peek window was opened from stays marked while it's open, and a
- * double-clicked symbol's places in its file are tinted.
+ * a peek window was opened from stays marked while it's open, a jump's
+ * lookup shows a wait cursor on its token, and a double-clicked symbol's
+ * places in its file are tinted.
  */
 export const CODE_INTEL_CSS = `
 [data-char][data-lsp-link] {
   text-decoration: underline;
   text-underline-offset: 2px;
   cursor: pointer;
+}
+[data-char][data-lsp-wait] {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: wait;
 }
 [data-char][data-lsp-occurrence] {
   background-color: var(--chrome-accent-soft);

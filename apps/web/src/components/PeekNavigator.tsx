@@ -12,7 +12,8 @@
  * - The preview is the whole file, highlighted like the diff, with hover and
  *   ⌘-click of its own: ⌘-clicking a name re-targets the window to it, and
  *   ‹ › (⌘[ ⌘], or a mouse's back/forward buttons) walk back and forth
- *   through those steps.
+ *   through those steps. ⌘⇧-click leaves for the diff when the target is in
+ *   it, and re-targets the window otherwise.
  * - "Go to it in this review" leaves for the diff when the file is changed.
  *
  * While nothing has been found yet it stays a one-line status, sized to it;
@@ -52,18 +53,26 @@ type HistorySpot = 'here' | 'ahead' | null;
 /**
  * Back and forward, however they come (a mouse's side buttons, whose events
  * the page often never sees; a trackpad swipe; the browser's own buttons),
- * step the peek window instead of leaving the page. While it's open, two
- * entries with the page's own URL sit in the browser history, `here` (where
- * it stays) and `ahead`: going back lands on the page's entry and going
- * forward on `ahead`, either is taken as a step and undone. The hash router
- * never notices, the URL doesn't change. Back past the first step closes the
- * window. On close the entries are stepped back over (`ahead` is left as a
- * forward entry that goes nowhere).
+ * step the peek window, or the diff's jump history when it's closed (see
+ * CodeIntel.tsx), instead of leaving the page. While `active`, two entries
+ * with the page's own URL sit in the browser history, `here` (where it
+ * stays) and `ahead`: going back lands on the page's entry and going forward
+ * on `ahead`, either is taken as a step and undone. The hash router never
+ * notices, the URL doesn't change. Back past the first step calls `onClose`.
+ * When it stops being active the entries are stepped back over (`ahead` is
+ * left as a forward entry that goes nowhere). One owner for both histories,
+ * so the peek opening over a jump history never stacks a second pair.
  */
-function useHistorySteps(onStep: (delta: 1 | -1) => void, onClose: () => void, atStart: boolean): void {
+export function useHistorySteps(
+  onStep: (delta: 1 | -1) => void,
+  onClose: () => void,
+  atStart: boolean,
+  active: boolean,
+): void {
   const latest = useRef({ onStep, onClose, atStart });
   latest.current = { onStep, onClose, atStart };
   useEffect(() => {
+    if (!active) return;
     const url = location.href;
     /** Where the browser is in our entries, or will be once `pending` own moves land. */
     let at: HistorySpot = null;
@@ -109,7 +118,7 @@ function useHistorySteps(onStep: (delta: 1 | -1) => void, onClose: () => void, a
       const spot = pending > 0 ? 'here' : at;
       history.go(spot === 'ahead' ? -2 : -1);
     };
-  }, []);
+  }, [active]);
 }
 
 type Size = { width: number; height: number };
@@ -323,8 +332,6 @@ export function PeekNavigator({
     handle.addEventListener('pointerup', onUp);
     handle.addEventListener('pointercancel', onUp);
   }, []);
-
-  useHistorySteps(onStep, onClose, nav.index === 0);
 
   // Everything the list can select, in order, for ↑/↓.
   const stops = useMemo(() => {
