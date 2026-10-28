@@ -6,7 +6,7 @@
 import { agentEvent, agentRun } from '@joinery/core/db';
 import type { AgentRun, RunKind, RunStatus } from '@joinery/core';
 import { runId as newRunId, runKindSchema, runStatusSchema } from '@joinery/core';
-import { and, asc, desc, eq, inArray, max } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, max, ne, sql } from 'drizzle-orm';
 import type { Db } from './client.ts';
 import { narrowUnion } from './narrow.ts';
 
@@ -24,11 +24,17 @@ function toAgentRun(row: typeof agentRun.$inferSelect): AgentRun {
   };
 }
 
-/** `{resume, resumeSessionAt, turnCount}`, persisted as JSON. */
+/**
+ * Where a run's session can be resumed from, persisted as JSON: the last
+ * message uuid it is safe to resume at, and the code the run was reading
+ * (`codeKey`, `headSha`), so a resume can tell the agent when that moved.
+ */
 export type ResumeCursor = {
   readonly resume: boolean;
   readonly resumeSessionAt: string | null;
   readonly turnCount: number;
+  readonly codeKey?: string;
+  readonly headSha?: string;
 };
 
 export type CreateRunInput = {
@@ -102,6 +108,38 @@ export async function setRunSessionId(db: Db, id: string, sessionId: string | nu
 
 export async function setRunResumeCursor(db: Db, id: string, cursor: ResumeCursor | null): Promise<AgentRun> {
   return update(db, id, { resumeCursor: cursor === null ? null : JSON.stringify(cursor) });
+}
+
+/** The newest run of a thread that has a session, other than `exceptRunId`: what a follow-up resumes. */
+export async function getLatestThreadSession(
+  db: Db,
+  threadId: string,
+  exceptRunId: string,
+): Promise<{ sessionId: string; cursor: ResumeCursor | null } | null> {
+  const rows = await db
+    .select({ id: agentRun.id, sessionId: agentRun.sessionId, resumeCursor: agentRun.resumeCursor })
+    .from(agentRun)
+    .where(and(eq(agentRun.threadId, threadId), isNotNull(agentRun.sessionId), ne(agentRun.id, exceptRunId)))
+    .orderBy(desc(agentRun.startedAt), desc(sql`rowid`))
+    .limit(1);
+  const row = rows[0];
+  if (row?.sessionId == null) return null;
+  return { sessionId: row.sessionId, cursor: row.resumeCursor === null ? null : (JSON.parse(row.resumeCursor) as ResumeCursor) };
+}
+
+/** Forgets every session of a review's runs (their transcripts are being deleted); returns their ids. */
+export async function clearReviewSessions(db: Db, reviewId: string): Promise<string[]> {
+  const rows = await db
+    .update(agentRun)
+    .set({ sessionId: null, resumeCursor: null })
+    .where(and(eq(agentRun.reviewId, reviewId), isNotNull(agentRun.sessionId)))
+    .returning({ sessionId: agentRun.sessionId });
+  return [...new Set(rows.map((r) => r.sessionId).filter((id): id is string => id !== null))];
+}
+
+/** Forgets every run's session (all transcripts are being deleted). */
+export async function clearAllSessions(db: Db): Promise<void> {
+  await db.update(agentRun).set({ sessionId: null, resumeCursor: null }).where(isNotNull(agentRun.sessionId));
 }
 
 export async function setRunError(db: Db, id: string, error: string | null): Promise<AgentRun> {

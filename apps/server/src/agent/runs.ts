@@ -18,21 +18,28 @@
  * agent itself runs in the background and reports back through `run.*`
  * events, so no HTTP request is held open for the length of an agent run.
  */
-import type { AgentModel, AgentRun, FileEntry, Review, ServerEvent } from '@joinery/core';
+import { agentModelSchema, type AgentModel, type AgentRun, type FileEntry, type Review, type ServerEvent } from '@joinery/core';
 import {
   appendEvent,
   createRun,
+  getResumeCursor,
+  getReview,
   getRun,
   getThreadWithComments,
+  listEvents,
+  listUnfinishedRuns,
   setRunError,
   setRunStatus,
   writeReadingOrderPlan,
   type Db,
+  type ResumeCursor,
 } from '../db/index.ts';
-import { generateReadingOrderPlan, ReadingOrderAgentError, type PullContext } from './readingOrder.ts';
-import { runThreadReplyAgent } from './threadReply.ts';
+import { generateReadingOrderPlan, ReadingOrderAgentError } from './readingOrder.ts';
+import { buildReviewContext, loadReviewContext } from './reviewContext.ts';
+import { codeKey } from './sessions.ts';
+import { runThreadReplyAgent, type ThreadSessionStart } from './threadReply.ts';
 import type { Invoke } from './tools.ts';
-import type { EngineForCwd } from './worktree.ts';
+import { resolveRunCwd, type EngineForCwd } from './worktree.ts';
 
 /** Live runs by id: the controller that aborts the agent, and a promise that settles once the run row is closed out. */
 const activeRuns = new Map<string, { controller: AbortController; ended: Promise<void> }>();
@@ -46,13 +53,10 @@ export type RunsDeps = {
 /** What `generateReadingOrder` needs from the review's engine (`cwd` = the review root). */
 export type ReadingOrderContext = {
   readonly cwd: string;
+  readonly review: Review;
   readonly files: readonly FileEntry[];
-  /**
-   * Fetches the PR's title and description; null when the review has no PR.
-   * Called inside the background run so a cold forge call never delays the
-   * 202. A failure only drops the PR context from the prompt.
-   */
-  readonly loadPull?: () => Promise<PullContext | null>;
+  /** The head the files are at, recorded so a resumed run can tell whether the code moved. */
+  readonly headSha: string;
   /** The model for the run; Claude Code's own default when absent. */
   readonly model?: AgentModel;
 };
@@ -61,8 +65,8 @@ export type ReadingOrderContext = {
  * `POST /api/reviews/:id/reading-order/generate`. Creates a
  * `reading_order` run, marks it `running`, and returns it straight away;
  * the agent itself runs in the background (see `runInBackground`). It
- * explores `context.cwd` with `context.files` as the changed-file list, its
- * structured output is validated against `readingOrderPlanSchema`, and the
+ * explores `context.cwd` with `context.files` as the changed-file list, the
+ * plan it submits is validated against `readingOrderPlanSchema`, and the
  * plan is persisted via `writeReadingOrderPlan` (the same path
  * `joinery reading-order set` uses). Completion is reported through
  * `reading_order.updated` and `run.ended`; on any failure the run is marked
@@ -73,28 +77,45 @@ export async function generateReadingOrder(deps: RunsDeps, reviewId: string, con
   deps.emit({ type: 'run.started', reviewId, run: created });
   const run = await setRunStatus(deps.db, created.id, 'running');
 
-  runInBackground(deps, reviewId, run.id, async (signal) => {
-    const pull = context.loadPull === undefined ? null : await context.loadPull().catch(() => null);
+  runReadingOrder(deps, run.id, context);
+  return run;
+}
+
+/** The background half of a reading-order run, fresh or (`restart`) resumed after a restart. */
+function runReadingOrder(
+  deps: RunsDeps,
+  runId: string,
+  context: ReadingOrderContext,
+  restart?: { readonly sessionId: string; readonly cursor: ResumeCursor | null },
+): void {
+  const reviewId = context.review.id;
+  runInBackground(deps, reviewId, runId, async (signal) => {
+    if (context.files.length === 0) {
+      throw new ReadingOrderAgentError('review has no changed files to build a reading order from');
+    }
     const plan = await generateReadingOrderPlan({
+      db: deps.db,
       cwd: context.cwd,
+      context: buildReviewContext(await loadReviewContext(deps.db, context.review, context.files)),
+      invoke: deps.invoke,
+      reviewId,
+      runId,
+      code: { key: codeKey(context.headSha, context.files), headSha: context.headSha },
+      ...(restart === undefined ? {} : { restart }),
       abortController: signal,
-      files: context.files,
-      ...(pull === null ? {} : { pull }),
       ...(context.model === undefined ? {} : { model: context.model }),
       onMessage: async (message) => {
         const type = typeof (message as { type?: unknown }).type === 'string' ? (message as { type: string }).type : 'unknown';
-        await appendEvent(deps.db, run.id, type, message);
+        await appendEvent(deps.db, runId, type, message);
       },
     });
     signal.signal.throwIfAborted();
-    await writeReadingOrderPlan(deps.db, reviewId, plan, run.id);
+    await writeReadingOrderPlan(deps.db, reviewId, plan, runId);
     deps.emit({ type: 'reading_order.updated', reviewId });
   }, {
     describeError: (err) =>
       err instanceof ReadingOrderAgentError || err instanceof Error ? err.message : `reading-order generation failed: ${String(err)}`,
   });
-
-  return run;
 }
 
 /**
@@ -106,19 +127,57 @@ export async function generateReadingOrder(deps: RunsDeps, reviewId: string, con
  * `review.id` (routes.ts holds one per request); `resolveRunCwd` (via
  * `runThreadReplyAgent`) decides whether that means the attached root or a
  * cached detached worktree.
+ *
+ * One run per thread at a time: a second ask while one is going gets that
+ * run, since two runs resuming one session would fork its conversation.
+ * `startingThreads` covers the gap between the check and the new row, so
+ * two asks in quick succession can't both start one.
  */
-export async function requestThreadReply(
+export function requestThreadReply(
   deps: RunsDeps,
   review: Review,
   threadId: string,
   engine: EngineForCwd,
   model?: AgentModel,
 ): Promise<AgentRun> {
+  const starting = startingThreads.get(threadId);
+  if (starting !== undefined) return starting;
+  const started = startThreadReply(deps, review, threadId, engine, model).finally(() => startingThreads.delete(threadId));
+  startingThreads.set(threadId, started);
+  return started;
+}
+
+/** Thread-reply runs being created, by thread: settles once the run's row says `running`. */
+const startingThreads = new Map<string, Promise<AgentRun>>();
+
+async function startThreadReply(
+  deps: RunsDeps,
+  review: Review,
+  threadId: string,
+  engine: EngineForCwd,
+  model: AgentModel | undefined,
+): Promise<AgentRun> {
   const reviewId = review.id;
+  const active = (await listUnfinishedRuns(deps.db)).find((r) => r.threadId === threadId);
+  if (active !== undefined) return active;
   const created = await createRun(deps.db, { reviewId, threadId, kind: 'thread_reply' });
   deps.emit({ type: 'run.started', reviewId, run: created });
   const run = await setRunStatus(deps.db, created.id, 'running');
+  await runThreadReply(deps, run.id, review, threadId, engine, model);
+  return run;
+}
 
+/** The background half of a thread-reply run, fresh or (`start`) resuming a given session. */
+async function runThreadReply(
+  deps: RunsDeps,
+  runId: string,
+  review: Review,
+  threadId: string,
+  engine: EngineForCwd,
+  model: AgentModel | undefined,
+  start?: ThreadSessionStart,
+): Promise<void> {
+  const reviewId = review.id;
   const thread = await getThreadWithComments(deps.db, threadId);
   const latestUserComment = thread === null ? undefined : [...thread.comments].reverse().find((c) => c.author === 'user');
   const setEyes = async (on: boolean): Promise<void> => {
@@ -131,10 +190,10 @@ export async function requestThreadReply(
   };
   await setEyes(true);
 
-  runInBackground(deps, reviewId, run.id, async (signal) => {
+  runInBackground(deps, reviewId, runId, async (signal) => {
     try {
       if (thread === null) throw new Error(`thread ${threadId} not found`);
-      await runThreadReplyAgent(deps, run.id, review, thread, engine, signal, model);
+      await runThreadReplyAgent(deps, runId, review, thread, engine, signal, model, start);
     } catch (err) {
       // A cancel is not a failure: no "Agent run failed" reply.
       if (signal.signal.aborted) throw err;
@@ -142,7 +201,7 @@ export async function requestThreadReply(
       await deps.invoke('POST', `/api/threads/${encodeURIComponent(threadId)}/replies`, {
         body: `Agent run failed: ${message}`,
         author: 'agent',
-        agentRunId: run.id,
+        agentRunId: runId,
       });
       throw err;
     } finally {
@@ -151,8 +210,52 @@ export async function requestThreadReply(
   }, {
     describeError: (err) => (err instanceof Error ? err.message : `thread-reply agent run failed: ${String(err)}`),
   });
+}
 
-  return run;
+export type ResumeDeps = Omit<RunsDeps, 'emit'> & {
+  readonly dispatch: (reviewId: string, event: ServerEvent) => void;
+  /** The review's engine, or null when the review is gone. */
+  readonly engineFor: (reviewId: string) => Promise<EngineForCwd | null>;
+};
+
+/**
+ * At boot: picks up each run the last shutdown cut off, resuming its own
+ * session at its cursor (the agent is told when the code moved meanwhile).
+ * A run that never got a session, or whose review or thread is gone, is
+ * marked `error` as before. Returns how many were resumed.
+ */
+export async function resumeInterruptedRuns(deps: ResumeDeps): Promise<number> {
+  let resumed = 0;
+  for (const run of await listUnfinishedRuns(deps.db)) {
+    const cursor = await getResumeCursor(deps.db, run.id);
+    const review = await getReview(deps.db, run.reviewId);
+    const engine = review === null ? null : await deps.engineFor(review.id);
+    if (run.sessionId === null || cursor === null || review === null || engine === null) {
+      await setRunError(deps.db, run.id, 'The server restarted while this run was in progress.');
+      await setRunStatus(deps.db, run.id, 'error');
+      continue;
+    }
+    const start = { sessionId: run.sessionId, cursor };
+    const runDeps: RunsDeps = { db: deps.db, invoke: deps.invoke, emit: (event) => deps.dispatch(review.id, event) };
+    if (run.kind === 'reading_order') {
+      const list = engine.getFileList();
+      const cwd = await resolveRunCwd({ db: deps.db }, review, engine);
+      runReadingOrder(runDeps, run.id, { cwd, review, files: list.files, headSha: list.headSha, ...modelOf(await listEvents(deps.db, run.id)) }, start);
+    } else if (run.threadId !== null) {
+      const model = modelOf(await listEvents(deps.db, run.id)).model;
+      await runThreadReply(runDeps, run.id, review, run.threadId, engine, model, { ...start, restarted: true });
+    }
+    resumed++;
+  }
+  return resumed;
+}
+
+/** The model a run was started with, from its `init` message. */
+function modelOf(events: readonly { type: string; payload: unknown }[]): { model?: AgentModel } {
+  const init = events.find((e) => e.type === 'system' && (e.payload as { subtype?: unknown }).subtype === 'init');
+  const model = (init?.payload as { model?: unknown } | undefined)?.model;
+  const parsed = agentModelSchema.safeParse(model);
+  return parsed.success ? { model: parsed.data } : {};
 }
 
 /**

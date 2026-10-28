@@ -21,7 +21,7 @@
  * whether the run needs its "nothing to add" fallback reply.
  */
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance, type SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
-import { reactionKindSchema, threadSideSchema } from '@joinery/core';
+import { reactionKindSchema, threadSideSchema, type ReadingOrderPlan } from '@joinery/core';
 import { z } from 'zod';
 
 export type Invoke = (method: string, path: string, body?: unknown) => Promise<Response>;
@@ -69,6 +69,12 @@ export type CreateReviewToolsOptions = {
   readonly runId: string;
   /** More read-only tools served alongside these, e.g. `gitToolDefinitions`. */
   readonly extraTools?: readonly SdkMcpToolDefinition<any>[];
+  /**
+   * Takes over `set_reading_order`'s handler: a reading-order run collects
+   * the plan instead of writing it straight away. The tool's definition
+   * stays the same, so every run kind's prompt still shares one prefix.
+   */
+  readonly onSetReadingOrder?: (plan: ReadingOrderPlan) => Promise<string>;
 };
 
 export type ReviewTools = {
@@ -260,7 +266,9 @@ export function createReviewTools(options: CreateReviewToolsOptions): ReviewTool
             .min(1),
         },
         async ({ steps }) =>
-          callAndMarkWritten('PUT', `/api/reviews/${encodeURIComponent(reviewId)}/reading-order`, { steps }),
+          options.onSetReadingOrder === undefined
+            ? callAndMarkWritten('PUT', `/api/reviews/${encodeURIComponent(reviewId)}/reading-order`, { steps })
+            : textResult(await options.onSetReadingOrder({ steps })),
       ),
       tool(
         'set_review_status',

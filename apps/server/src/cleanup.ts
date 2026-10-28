@@ -1,13 +1,15 @@
 /**
  * Deleting a review or a whole repo for good, from the settings page. The
  * rows cascade on their own (`ON DELETE CASCADE`); this is the rest: live
- * agent runs are cancelled, the review's engine stopped, the refs Joinery
- * wrote under `refs/review/` dropped, and for a repo its agent worktrees
+ * agent runs are cancelled and their sessions deleted, the review's engine
+ * stopped, the refs Joinery wrote under `refs/review/` dropped, and for a
+ * repo its agent worktrees
  * removed from disk. The user's clone and branches are never touched.
  */
 import type { Review } from '@joinery/core';
 import { removeAgentWorktree } from './agent/maintenance.ts';
 import { cancelRun } from './agent/runs.ts';
+import { deleteReviewSessions } from './agent/sessions.ts';
 import type { Invoke } from './agent/tools.ts';
 import { deleteRepo, deleteReview, getRepoById, listReviews, listUnfinishedRuns, listWorktrees, type Db } from './db/index.ts';
 import type { EngineRegistry } from './engine/index.ts';
@@ -34,6 +36,7 @@ async function releaseReview(deps: CleanupDeps, review: Review, repoRoot: string
 export async function deleteReviewFully(deps: CleanupDeps, review: Review): Promise<void> {
   const repo = await getRepoById(deps.db, review.repoId);
   await releaseReview(deps, review, repo?.rootPath ?? null);
+  await deleteReviewSessions(deps.db, review.id);
   await deleteReview(deps.db, review.id);
   deps.registry.bus.changed('home');
 }
@@ -44,6 +47,7 @@ export async function deleteRepoFully(deps: CleanupDeps, repoId: string): Promis
   deps.registry.pollers.remove(repoId);
   for (const review of await listReviews(deps.db, { repoId })) {
     await releaseReview(deps, review, repo.rootPath);
+    await deleteReviewSessions(deps.db, review.id);
   }
   for (const worktree of await listWorktrees(deps.db, repoId)) {
     try {

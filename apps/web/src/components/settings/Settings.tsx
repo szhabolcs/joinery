@@ -666,21 +666,26 @@ function FullDiskAccessBody({
 
 // --- Data ---
 
+type ClearAction = 'clearWorktrees' | 'clearReviewWorktrees' | 'clearSessions' | 'clearCachedAnswers';
+
+const CLEARED: Record<ClearAction, (n: number) => string> = {
+  clearWorktrees: (n) => `Removed ${String(n)} ${n === 1 ? 'worktree' : 'worktrees'}.`,
+  clearReviewWorktrees: (n) => `Removed ${String(n)} ${n === 1 ? 'worktree' : 'worktrees'}.`,
+  clearSessions: (n) => `Deleted ${String(n)} agent ${n === 1 ? 'session' : 'sessions'}.`,
+  clearCachedAnswers: (n) => `Cleared ${String(n)} cached ${n === 1 ? 'answer' : 'answers'}.`,
+};
+
 function DataPanel(): React.JSX.Element {
   const usage = useLoad(() => callApi('dataUsage'));
   const archived = useLoad(() => callApi('listReviews', { query: { status: 'archived' } }));
   const { repos, unarchiveReview } = useHomeData();
   const [clearResult, setClearResult] = useState<string | null>(null);
 
-  const clear = async (what: 'clearWorktrees' | 'clearReviewWorktrees' | 'clearCachedAnswers') => {
+  const clear = async (what: ClearAction) => {
     setClearResult(null);
     try {
       const { removed } = await callApi(what);
-      setClearResult(
-        what !== 'clearCachedAnswers'
-          ? `Removed ${String(removed)} ${removed === 1 ? 'worktree' : 'worktrees'}.`
-          : `Cleared ${String(removed)} cached ${removed === 1 ? 'answer' : 'answers'}.`,
-      );
+      setClearResult(CLEARED[what](removed));
     } catch (err) {
       throw new Error(errorText(err, 'Could not clear it.'));
     } finally {
@@ -749,9 +754,9 @@ function UsageTree({
   onClear,
 }: {
   usage: DataUsage;
-  onClear: (what: 'clearWorktrees' | 'clearReviewWorktrees' | 'clearCachedAnswers') => Promise<void>;
+  onClear: (what: ClearAction) => Promise<void>;
 }): React.JSX.Element {
-  const total = usage.databaseBytes + usage.worktrees.bytes;
+  const total = usage.databaseBytes + usage.worktrees.bytes + usage.sessions.bytes;
   const parts = [
     {
       key: 'database',
@@ -813,6 +818,25 @@ function UsageTree({
           onConfirm={() => onClear('clearReviewWorktrees')}
           confirmLabel="Remove"
           triggerLabel="Remove review worktrees"
+          triggerClassName="chrome-icon-btn"
+        >
+          <Trash2 size={14} strokeWidth={1.75} aria-hidden />
+        </ConfirmDelete>
+      ),
+    },
+    {
+      key: 'sessions',
+      title: 'Agent sessions',
+      detail: `${String(usage.sessions.count)} ${usage.sessions.count === 1 ? 'conversation' : 'conversations'} agent follow-ups resume · started fresh when gone`,
+      bytes: usage.sessions.bytes,
+      color: 'bg-rose-500',
+      nested: false,
+      action: (
+        <ConfirmDelete
+          prompt="Delete the agent sessions? A thread's next agent reply starts a fresh one."
+          onConfirm={() => onClear('clearSessions')}
+          confirmLabel="Delete"
+          triggerLabel="Delete agent sessions"
           triggerClassName="chrome-icon-btn"
         >
           <Trash2 size={14} strokeWidth={1.75} aria-hidden />

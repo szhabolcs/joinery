@@ -9,8 +9,8 @@
  *    auto-approves `Read`/`Grep`/`Glob` only when the path they'd touch
  *    resolves under the run's `cwd` (the attached root or agent worktree —
  *    see `worktree.ts`) and any Glob/Grep pattern stays relative to it,
- *    allows any `mcp__joinery__*` tool (the in-process
- *    app tools from `tools.ts`), and denies everything else — an allowlist,
+ *    allows the `mcp__joinery__*` tools (the in-process app tools from
+ *    `tools.ts`) the run kind may use, and denies everything else — an allowlist,
  *    not a blocklist, so a new tool the SDK adds tomorrow is denied by
  *    default.
  */
@@ -52,20 +52,30 @@ function escapesBase(pattern: string): boolean {
 export type MakeAgentCanUseToolOptions = {
   /** The run's cwd (attached root or agent worktree — `worktree.ts`). */
   readonly cwd: string;
+  /**
+   * The `joinery` tools this run kind may call, by bare name (`reply`,
+   * `git_log`); all of them when absent. Every kind is *offered* the same
+   * tools so their prompts share a cached prefix (`reviewContext.ts`), so
+   * this is where a kind's narrower set is enforced.
+   */
+  readonly joineryTools?: ReadonlySet<string>;
 };
 
 /**
  * Builds the `canUseTool` callback for an embedded agent run.
  * `Read`/`Grep`/`Glob` are allowed only when the path they'd touch resolves
- * under `cwd`; any `mcp__joinery__*` tool (the in-process app tools) is
- * always allowed since those are already scoped to the run's review server
- * side; everything else — including `Bash` and any future SDK tool — is
- * denied by default.
+ * under `cwd`; an `mcp__joinery__*` tool (the in-process app tools, already
+ * scoped to the run's review server side) is allowed when it is one of
+ * `joineryTools`; everything else — including `Bash` and any future SDK
+ * tool — is denied by default.
  */
 export function makeAgentCanUseTool(options: MakeAgentCanUseToolOptions): CanUseTool {
   return async (toolName, input) => {
     if (toolName.startsWith('mcp__joinery__')) {
-      return ALLOW(input);
+      const name = toolName.slice('mcp__joinery__'.length);
+      return options.joineryTools === undefined || options.joineryTools.has(name)
+        ? ALLOW(input)
+        : DENY(`tool "${name}" is not part of this run's task`);
     }
     if (toolName === 'Read' || toolName === 'Grep' || toolName === 'Glob') {
       // Glob's `pattern` and Grep's `glob` are matched relative to `path`,

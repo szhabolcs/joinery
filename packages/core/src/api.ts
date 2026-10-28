@@ -260,6 +260,8 @@ export const dataUsageSchema = z.object({
   worktrees: z.object({ count: z.number().int().nonnegative(), bytes: z.number().int().nonnegative() }),
   /** Checkouts language servers read reviews from; made again on the next hover. */
   reviewWorktrees: z.object({ count: z.number().int().nonnegative(), bytes: z.number().int().nonnegative() }),
+  /** Agent session transcripts, one per thread asked; a thread whose session is gone starts a fresh one. */
+  sessions: z.object({ count: z.number().int().nonnegative(), bytes: z.number().int().nonnegative() }),
   /** Last known PR lists, PR details, review stats and your forge user; refetched on demand. */
   cachedAnswers: z.object({ count: z.number().int().nonnegative(), bytes: z.number().int().nonnegative() }),
 });
@@ -409,6 +411,14 @@ export const api = {
   clearReviewWorktrees: def({
     method: 'POST',
     path: () => '/api/settings/review-worktrees/clear',
+    body: undefined,
+    query: undefined,
+    response: z.object({ removed: z.number().int() }),
+  }),
+  /** Delete every agent session; threads start fresh ones. Refused while an agent run is going. */
+  clearSessions: def({
+    method: 'POST',
+    path: () => '/api/settings/sessions/clear',
     body: undefined,
     query: undefined,
     response: z.object({ removed: z.number().int() }),

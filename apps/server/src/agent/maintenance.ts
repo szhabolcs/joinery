@@ -1,11 +1,11 @@
 /**
  * Housekeeping for agent runs and their worktrees.
  *
- * - `failOrphanedRuns` runs once at boot: a run still `pending`/`running`
- *   in the database belongs to a previous server process (runs execute
- *   in-process, and don't resume), so it is marked
- *   `error` rather than left looking busy forever, and any `eyes` working
- *   indicator it left on a comment is cleared.
+ * - `clearOrphanedIndicators` runs once at boot: a run still
+ *   `pending`/`running` in the database belongs to a previous server
+ *   process, so any `eyes` working indicator it left on a comment is
+ *   cleared. `runs.ts`'s `resumeInterruptedRuns` then resumes each such run
+ *   from its session, and marks one it can't resume `error`.
  * - `startWorktreeSweep` keeps pruning cached agent worktrees
  *   ("agent worktrees are a cache, not state") for as long as the server
  *   runs: once at start, then on a fixed interval. A worktree unused for
@@ -25,22 +25,14 @@ import {
   listStaleWorktrees,
   listUnfinishedRuns,
   listWorktrees,
-  setRunError,
-  setRunStatus,
   type AgentWorktree,
   type Db,
 } from '../db/index.ts';
 import { resolveDataPaths } from '../db/paths.ts';
 import { gitCommonDir, scopedRemoveWorktree, worktreeDirName } from '../git/index.ts';
 
-export async function failOrphanedRuns(db: Db): Promise<number> {
-  const runs = await listUnfinishedRuns(db);
-  for (const run of runs) {
-    await setRunError(db, run.id, 'The server restarted while this run was in progress.');
-    await setRunStatus(db, run.id, 'error');
-  }
+export async function clearOrphanedIndicators(db: Db): Promise<void> {
   await clearAgentReactions(db, 'eyes');
-  return runs.length;
 }
 
 export type WorktreeSweepOptions = {

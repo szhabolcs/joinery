@@ -1,6 +1,15 @@
 import { describe, expect, test } from 'bun:test';
-import type { FileEntry } from '@joinery/core';
-import { buildReadingOrderPrompt } from '../../src/agent/readingOrder.ts';
+import type { FileEntry, Review } from '@joinery/core';
+import { buildReadingOrderTask } from '../../src/agent/readingOrder.ts';
+import { buildReviewContext } from '../../src/agent/reviewContext.ts';
+
+const review = { branch: 'feature', pinnedSha: null, baseRef: 'main', prNumber: null } as Review;
+
+/** What a reading-order run sends: the shared review context, then its task. */
+function buildReadingOrderPrompt(files: FileEntry[]): string {
+  const repo = { remoteOwner: null, remoteName: null, rootPath: '/repo' };
+  return `${buildReviewContext({ review, repo, pull: null, readingOrderTitles: [], files })}\n\n${buildReadingOrderTask()}`;
+}
 
 function file(overrides: Partial<FileEntry>): FileEntry {
   return {

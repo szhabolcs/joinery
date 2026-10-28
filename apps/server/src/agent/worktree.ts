@@ -13,7 +13,7 @@
  */
 import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Review } from '@joinery/core';
+import type { FileEntry, Review } from '@joinery/core';
 import {
   createWorktree,
   deleteWorktree,
@@ -33,7 +33,7 @@ export type WorktreeDeps = {
 /** What `resolveRunCwd` needs from the review's engine. */
 export type EngineForCwd = {
   getState(): Promise<{ root: { attachedPath: string | null } }>;
-  getFileList(revision?: 'head'): { headSha: string };
+  getFileList(revision?: 'head'): { headSha: string; files: FileEntry[] };
 };
 
 async function directoryExists(path: string): Promise<boolean> {

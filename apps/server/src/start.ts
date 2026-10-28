@@ -2,7 +2,7 @@
  * Server startup (`startServer`, shared by `bun src/index.ts` and `joinery serve`): run migrations, ensure the data dir and
  * bearer token, start the HTTP + WS server bound to `127.0.0.1` only, log
  * the URL, and dispose engines, cat-file processes and language servers cleanly
- * on shutdown. Also fails agent runs orphaned by the previous process and keeps the agent
+ * on shutdown. Also resumes agent runs the previous process cut off and keeps the agent
  * worktree cache pruned (`agent/maintenance.ts`), the git/`gh` answer
  * cache too (`storedCache.ts`), and Joinery's language servers up to date
  * (`lsp/install.ts`).
@@ -11,7 +11,8 @@ import { DEFAULT_HOST } from '@joinery/core';
 import { initDataDir, openDb, readToken, runMigrations } from './db/index.ts';
 import { EngineRegistry } from './engine/index.ts';
 import { createApp } from './http/app.ts';
-import { failOrphanedRuns, startWorktreeSweep } from './agent/maintenance.ts';
+import { clearOrphanedIndicators, startWorktreeSweep } from './agent/maintenance.ts';
+import { resumeInterruptedRuns } from './agent/runs.ts';
 import { startCacheEntryPrune } from './storedCache.ts';
 import { lsp, startLspUpdates } from './lsp/index.ts';
 import { loadLspChoices } from './lsp/choices.ts';
@@ -28,8 +29,7 @@ export async function startServer(): Promise<void> {
 
   const token = await readToken(paths);
 
-  const orphaned = await failOrphanedRuns(db);
-  if (orphaned > 0) console.log(`[runs] marked ${String(orphaned)} run(s) interrupted by the last shutdown as errored`);
+  await clearOrphanedIndicators(db);
   const stopWorktreeSweep = startWorktreeSweep(db);
   const stopCacheEntryPrune = startCacheEntryPrune(db);
 
@@ -38,7 +38,7 @@ export async function startServer(): Promise<void> {
   const layout = runtimeLayout();
   const webDistDir = layout.webDistDir;
 
-  const { app, websocket } = createApp({ db, registry, token, webDistDir });
+  const { app, websocket, invoke } = createApp({ db, registry, token, webDistDir });
 
   const host = process.env['JOINERY_HOST']?.trim() || DEFAULT_HOST;
   const port = configuredPort();
@@ -65,6 +65,18 @@ export async function startServer(): Promise<void> {
 
   console.log(`joinery ${layout.version} listening on http://${host}:${String(port)}`);
   console.log(`data dir: ${paths.root}`);
+
+  // Runs the last shutdown cut off pick up from their sessions.
+  const resumed = await resumeInterruptedRuns({
+    db,
+    invoke,
+    dispatch: (reviewId, event) => registry.dispatch(reviewId, event),
+    engineFor: (reviewId) => registry.get(reviewId),
+  }).catch((err: unknown) => {
+    console.log(`[runs] could not resume interrupted runs: ${err instanceof Error ? err.message : String(err)}`);
+    return 0;
+  });
+  if (resumed > 0) console.log(`[runs] resumed ${String(resumed)} run(s) interrupted by the last shutdown`);
 
   let shuttingDown = false;
   const shutdown = (): void => {

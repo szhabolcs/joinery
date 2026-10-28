@@ -101,14 +101,23 @@ packages/core  zod schemas shared by all three
 ## Agents (`apps/server/src/agent`)
 
 - **Runs:**
-  - Each run is one `query()`. The request returns at once with a `running` run.
+  - The request returns at once with a `running` run.
   - Progress goes out as `run.started`, `run.activity` and `run.ended`.
   - A run's messages are stored in `agent_event` for inspection (`joinery run <id>`).
-  - A server restart marks in-flight runs `error`.
-  - Concurrency is unlimited, and nothing triggers an agent automatically.
+  - One run per thread at a time; otherwise concurrency is unlimited, and nothing triggers an agent automatically.
+- **Sessions (`sessions.ts`):**
+  - One session per thread: a follow-up resumes the thread's session with only what is new, instead of starting over.
+  - A server restart resumes each in-flight run from its own session, at the last point with no tool call left waiting. A run with nothing saved to resume is marked `error`.
+  - Transcripts live in `data/sessions/<review>/` through the SDK's `sessionStore`. The CLI's own copy under its config dir is deleted after each run. The config dir itself is never moved: the user's login lives there.
+  - A resumed session is told when the head or any changed file moved since its last turn (`codeKey`), so it re-reads rather than answering from stale reads.
+  - Sessions are a cache, like agent worktrees: a thread whose session is gone starts a fresh one. Archiving or deleting a review cancels its runs and deletes its sessions, and the settings page can clear them all while no run is going.
+- **One cached prefix (`reviewContext.ts`):**
+  - Every run kind is offered the same tools and the same system prompt, so all runs of a review share the prompt cache's tools-and-system prefix. What a kind may call is `canUseTool`'s job, never the tool list's.
+  - The reading order submits its plan through `set_reading_order`, not structured output, which would add a tool of its own.
+  - The prompt opens with the review context in a fixed order (repo, branch, base, PR, changed files, reading-order steps), then the run's task.
 - **The agent is read-only and has no shell:**
   - `disallowedTools` includes `Write`, `Edit`, `NotebookEdit` and `Bash`.
-  - `canUseTool` allows only `Read`/`Grep`/`Glob` inside the run's `cwd`, plus the in-process `joinery` tools (`tools.ts`, thin wrappers over the HTTP routes, scoped to the run's review) and the read-only git tools (`gitTools.ts`).
+  - `canUseTool` allows only `Read`/`Grep`/`Glob` inside the run's `cwd`, plus the in-process `joinery` tools the run kind may use (`tools.ts`, thin wrappers over the HTTP routes, scoped to the run's review) and the read-only git tools (`gitTools.ts`).
   - Everything else, including tools the SDK adds later, is denied.
 - **Settings:**
   - `settingSources: []`, so the reviewed repo's `.claude` settings can't grant tools.

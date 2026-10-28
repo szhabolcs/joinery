@@ -7,7 +7,8 @@
  *   language server would answer hover/peek per language;
  * - Full Disk Access for the installed binary on macOS, opening the pane
  *   to grant it, and restarting the background service so a grant applies;
- * - the data directory's footprint, and clearing what's only a cache.
+ * - the data directory's footprint, and clearing what's only a cache
+ *   (agent and review worktrees, agent sessions, cached forge answers).
  */
 import { spawn } from 'node:child_process';
 import { open, readdir, realpath, rm, stat } from 'node:fs/promises';
@@ -16,6 +17,7 @@ import { join } from 'node:path';
 import type { DataUsage, FullDiskAccess, Integrations } from '@joinery/core';
 import { removeAgentWorktree, removeOwnWorktree } from './agent/maintenance.ts';
 import { findClaudeExecutable } from './agent/claudeExecutable.ts';
+import { deleteAllSessions, listSessionFiles, sessionsDir } from './agent/sessions.ts';
 import { cacheEntryStats, clearCacheEntries, listRepos, listUnfinishedRuns, listWorktrees, type Db } from './db/index.ts';
 import { resolveDataPaths } from './db/paths.ts';
 import { diagnose } from './git/forge/cli.ts';
@@ -153,13 +155,15 @@ function agentWorktreeDirs(worktreesDir: string): Promise<string[]> {
 export async function getDataUsage(db: Db): Promise<DataUsage> {
   const paths = resolveDataPaths();
   const lspDir = join(paths.worktreesDir, 'lsp');
-  const [db0, wal, agentDirs, worktreeBytes, reviewDirs, reviewBytes, cached] = await Promise.all([
+  const [db0, wal, agentDirs, worktreeBytes, reviewDirs, reviewBytes, sessionFiles, sessionBytes, cached] = await Promise.all([
     fileSize(paths.dbFile),
     fileSize(`${paths.dbFile}-wal`),
     agentWorktreeDirs(paths.worktreesDir),
     diskUsage(paths.worktreesDir),
     checkoutDirs(lspDir),
     diskUsage(lspDir),
+    listSessionFiles(),
+    diskUsage(sessionsDir()),
     cacheEntryStats(db),
   ]);
   return {
@@ -167,6 +171,7 @@ export async function getDataUsage(db: Db): Promise<DataUsage> {
     databaseBytes: db0 + wal,
     worktrees: { count: agentDirs.length, bytes: worktreeBytes },
     reviewWorktrees: { count: reviewDirs.length, bytes: reviewBytes },
+    sessions: { count: sessionFiles.length, bytes: sessionBytes },
     cachedAnswers: cached,
   };
 }
@@ -204,6 +209,17 @@ export async function clearWorktrees(db: Db): Promise<number> {
 /** Remove every review worktree (language-server checkout); returns how many. */
 export function clearReviewWorktrees(): Promise<number> {
   return lspViews.clearCheckouts();
+}
+
+/**
+ * Delete every agent session; returns how many. Refused while a run is
+ * going, since it is writing to its own. Threads start fresh sessions after.
+ */
+export async function clearSessions(db: Db): Promise<number> {
+  if ((await listUnfinishedRuns(db)).length > 0) {
+    throw conflict('an agent run is in progress', 'Wait for it to finish, or cancel it, then try again.');
+  }
+  return deleteAllSessions(db);
 }
 
 /** Delete every cached answer, from the database and from memory; returns how many rows. */
