@@ -98,10 +98,11 @@ type DiffInstance = {
   isLineRenderable: (line: number) => boolean;
   revealLine: (line: number) => boolean;
   expandHunk: (hunkIndex: number, direction: 'up' | 'down' | 'both', count?: number) => void;
+  getLinePosition: (line: number, side?: 'additions' | 'deletions') => { top: number; height: number } | undefined;
 };
 
 function isDiffInstance(value: unknown): value is DiffInstance {
-  return typeof value === 'object' && value !== null && 'revealLine' in value && 'isLineRenderable' in value && 'expandHunk' in value;
+  return typeof value === 'object' && value !== null && 'revealLine' in value && 'isLineRenderable' in value && 'expandHunk' in value && 'getLinePosition' in value;
 }
 
 /** Resolves true once `ready()` holds, checked every frame, or false after `ms`. */
@@ -268,6 +269,8 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
   /** Bumped by each jump and each direct lookup, so a slower earlier one gives way. */
   const revealSeq = useRef(0);
   const directSeq = useRef(0);
+  /** The token a direct lookup is running for, showing the wait cursor. */
+  const waiting = useRef<HTMLElement | null>(null);
   const [missing, setMissing] = useState<{ rect: DOMRect; text: string } | null>(null);
 
   const keyOf = useCallback(
@@ -390,6 +393,9 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
       cancelHover();
       setCard(null);
       entryIds.current += 1;
+      // A ⌘⇧-click lookup still running gives way to this window.
+      directSeq.current += 1;
+      waiting.current?.removeAttribute('data-lsp-wait');
       const id = entryIds.current;
       const entry: NavEntry = {
         id,
@@ -466,18 +472,24 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
       await untilReady(() => !live() || instances.current.has(path));
       const instance = () => instances.current.get(path);
       if (!live()) return;
-      if (instance()?.isLineRenderable(line) === false) {
-        // Unchanged lines need the whole file: a zero-line expansion loads it,
-        // and `revealLine` can unfold the line once it's in.
-        instance()?.expandHunk(0, 'up', 0);
-        await untilReady(() => !live() || instance()?.isLineRenderable(line) === true || instance()?.revealLine(line) === true);
-        await untilReady(() => !live() || instance()?.isLineRenderable(line) === true, 1_000);
-        // The unfolded rows are laid out on the next render pass.
-        await nextFrame();
-        await nextFrame();
+      // A partial diff (no whole file yet) calls every line renderable, so ask its hunks.
+      const inHunks = () =>
+        item.fileDiff.hunks.some((h) => line >= h.additionStart && line < h.additionStart + h.additionCount);
+      const renderable = () => (item.fileDiff.isPartial ? inHunks() : instance()?.isLineRenderable(line) === true);
+      if (!renderable()) {
+        // Unchanged lines need the whole file: a zero-line expansion loads it
+        // (hydrated into this same object), then `revealLine` unfolds the line.
+        if (item.fileDiff.isPartial) {
+          instance()?.expandHunk(0, 'up', 0);
+          await untilReady(() => !live() || !item.fileDiff.isPartial);
+          if (!live()) return;
+        }
+        if (!item.fileDiff.isPartial) instance()?.revealLine(line);
       }
+      // The unfolded rows are laid out on a later render pass; scroll once the line has a place.
+      await untilReady(() => !live() || instance()?.getLinePosition(line, 'additions') !== undefined, 1_000);
       if (!live()) return;
-      const shown = instance()?.isLineRenderable(line) ?? false;
+      const shown = renderable();
       view.scrollTo(
         shown
           ? { type: 'line', id: path, lineNumber: line, side: 'additions', align: 'center' }
@@ -544,11 +556,15 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
       setMissing(null);
       directSeq.current += 1;
       const seq = directSeq.current;
+      waiting.current?.removeAttribute('data-lsp-wait');
       const element = target.element;
+      waiting.current = element;
       element.setAttribute('data-lsp-wait', '');
       const key = keyOf(target);
       const query = { path: target.path, line: target.pos.line, character: target.pos.character };
-      Promise.all([definitionOf(reviewId, key, query), implementationsOf(reviewId, key, query)])
+      // A server without implementations still has a definition to go to.
+      const behind = implementationsOf(reviewId, key, query).catch(() => ({ implementations: null, off: null }));
+      Promise.all([definitionOf(reviewId, key, query), behind])
         .then(([{ definition, off }, { implementations, off: implementationsOff }]) => {
           if (seq !== directSeq.current) return;
           // A switched-off server: the peek says so and links to Settings.
@@ -583,7 +599,9 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
         .catch((err: unknown) => {
           if (seq === directSeq.current) showMissing(target, `Couldn't look it up: ${err instanceof Error ? err.message : String(err)}`);
         })
-        .finally(() => element.removeAttribute('data-lsp-wait'));
+        .finally(() => {
+          if (seq === directSeq.current) element.removeAttribute('data-lsp-wait');
+        });
     },
     [cancelHover, go, keyOf, openPeek, reviewId, showMissing],
   );
