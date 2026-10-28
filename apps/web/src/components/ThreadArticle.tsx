@@ -12,7 +12,7 @@ import type { Thread } from '@joinery/core';
 import { getAgentModel } from '../lib/agentModel.ts';
 import { callApi } from '../lib/apiClient.ts';
 import { AskButton } from './AskButton.tsx';
-import { CommentComposer } from './CommentComposer.tsx';
+import { CommentComposer, hasUnsent } from './CommentComposer.tsx';
 import { ConfirmDelete } from './ConfirmDelete.tsx';
 import { Markdown } from './Markdown.tsx';
 import { ReactionBar, ReactionPicker } from './ReactionBar.tsx';
@@ -59,7 +59,9 @@ export function ThreadArticle({
   const markActive = () => {
     if (!active) setActiveThreadId(thread.id);
   };
-  const [replying, setReplying] = useState(false);
+  const replyKey = `reply:${thread.id}`;
+  // Reopen a reply left half-written when the diff unmounted this card.
+  const [replying, setReplying] = useState(() => hasUnsent(replyKey));
   // Resolved threads start collapsed; resolving/reopening re-syncs the
   // default (derived from props),
   // while a manual toggle in between is respected until the status changes.
@@ -281,6 +283,7 @@ export function ThreadArticle({
         {replying ? (
           <CommentComposer
             variant="inline"
+            draftKey={replyKey}
             placeholder="Reply…"
             onSubmit={(body, ask) => void reply(body, ask)}
             onCancel={() => setReplying(false)}

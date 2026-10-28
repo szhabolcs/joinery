@@ -400,11 +400,13 @@ export function ReviewCodeView(): React.JSX.Element {
             return entry === undefined ? null : <FilePreview entry={entry} />;
           }
           if (meta.threadId === DRAFT_THREAD_ID) {
+            const draftKey = `${draftThread?.path}:${draftThread?.side}:${draftThread?.endLine}:${draftThread?.body ?? ''}`;
             return (
               <div className="my-2 w-full max-w-2xl font-sans">
                 <CommentComposer
                   // A new draft (e.g. a second selection) starts from its own prefill.
-                  key={`${draftThread?.path}:${draftThread?.side}:${draftThread?.endLine}:${draftThread?.body ?? ''}`}
+                  key={draftKey}
+                  draftKey={draftKey}
                   initialValue={draftThread?.body ?? ''}
                   placeholder="Comment on this line…"
                   onSubmit={(body, ask) => void submitDraftThread(body, ask)}

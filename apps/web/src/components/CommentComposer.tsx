@@ -10,6 +10,17 @@ import { useEffect, useRef, useState } from 'react';
 import { AskButton } from './AskButton.tsx';
 import { Hint } from './controls.tsx';
 
+/**
+ * Unsent text by `draftKey`. The diff virtualizes its files, so scrolling or
+ * jumping past a composer unmounts it; this brings the text back on remount.
+ */
+const unsent = new Map<string, string>();
+
+/** Whether a composer under `draftKey` holds unsent text (e.g. to reopen a reply). */
+export function hasUnsent(draftKey: string): boolean {
+  return unsent.has(draftKey);
+}
+
 export function CommentComposer({
   onSubmit,
   onCancel,
@@ -17,6 +28,7 @@ export function CommentComposer({
   autoFocus = true,
   variant = 'card',
   initialValue = '',
+  draftKey,
 }: {
   onSubmit: (body: string, askAgent: boolean) => void;
   onCancel?: () => void;
@@ -26,15 +38,26 @@ export function CommentComposer({
   variant?: 'card' | 'inline';
   /** Prefilled text, read once on mount; the caret starts after it. */
   initialValue?: string;
+  /** Keeps unsent text across unmounts; cleared on submit or cancel. */
+  draftKey?: string;
 }): React.JSX.Element {
-  const [value, setValue] = useState(initialValue);
+  const [restored] = useState(() => (draftKey === undefined ? undefined : unsent.get(draftKey)));
+  const [value, setValue] = useState(restored ?? initialValue);
   const ref = useRef<HTMLTextAreaElement>(null);
+
+  const update = (next: string) => {
+    setValue(next);
+    if (draftKey === undefined) return;
+    if (next.length === 0) unsent.delete(draftKey);
+    else unsent.set(draftKey, next);
+  };
 
   // A textarea's caret starts at 0, which would put typing above the prefill.
   useEffect(() => {
     const el = ref.current;
-    if (el === null || initialValue.length === 0) return;
-    el.setSelectionRange(initialValue.length, initialValue.length);
+    const start = restored ?? initialValue;
+    if (el === null || start.length === 0) return;
+    el.setSelectionRange(start.length, start.length);
     // Mount only: the prefill is a starting point, not a controlled value.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -54,7 +77,12 @@ export function CommentComposer({
   const submit = (askAgent: boolean) => {
     if (empty) return;
     onSubmit(value, askAgent);
-    setValue('');
+    update('');
+  };
+
+  const cancel = () => {
+    if (draftKey !== undefined) unsent.delete(draftKey);
+    onCancel?.();
   };
 
   return (
@@ -65,15 +93,16 @@ export function CommentComposer({
     >
       <textarea
         ref={ref}
-        autoFocus={autoFocus}
+        // A restored composer remounts as it scrolls back into view; don't let it grab focus then.
+        autoFocus={autoFocus && restored === undefined}
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => update(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
             e.preventDefault();
             submit(false);
           } else if (e.key === 'Escape') {
-            onCancel?.();
+            cancel();
           }
         }}
         placeholder={placeholder}
@@ -85,7 +114,7 @@ export function CommentComposer({
       />
       <div className={`flex flex-wrap items-center justify-end gap-1.5 pb-2 ${variant === 'card' ? 'px-2' : 'px-0'}`}>
         {onCancel !== undefined && (
-          <button type="button" onClick={onCancel} className="chrome-btn bg-transparent">
+          <button type="button" onClick={cancel} className="chrome-btn bg-transparent">
             Cancel
           </button>
         )}
