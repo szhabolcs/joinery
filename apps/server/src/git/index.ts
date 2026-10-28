@@ -59,8 +59,11 @@ export { getMe, gitUserName, type Me } from './me.ts';
 export { countAheadBehind, listBranches, selectBranches, type BranchSummary, type ListBranchesOptions } from './refs.ts';
 
 export {
+  blobSideSize,
   getFilePatch,
   getFileContents,
+  readBlobSide,
+  type BlobSideParams,
   type GetFilePatchParams,
   type GetFileContentsParams,
   type FilePatchEntryInput,

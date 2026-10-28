@@ -79,9 +79,9 @@ function CodeBlock({
 // panel (as step explanations, sized down to `text-xs` by that caller) and
 // in thread bodies, so it needs to look right at both its own default size
 // and when a caller overrides it smaller.
-export function Markdown({ children }: { children: string }): React.JSX.Element {
+export function Markdown({ children, className = '' }: { children: string; className?: string }): React.JSX.Element {
   return (
-    <div className="prose-sm max-w-none text-body leading-relaxed text-chrome-fg [&_a]:text-chrome-accent [&_code]:text-xs [&_p]:my-1">
+    <div className={`prose-sm max-w-none text-body leading-relaxed text-chrome-fg [&_a]:text-chrome-accent [&_code]:text-xs [&_p]:my-1 ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{

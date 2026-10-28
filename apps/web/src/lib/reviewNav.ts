@@ -5,6 +5,7 @@
  */
 import type { CodeViewDiffItem, Hunk, SelectionSide } from '@pierre/diffs';
 import type { ReadingOrder, Thread } from '@joinery/core';
+import { isPreviewDiff } from './preview.ts';
 
 type ReadingOrderStep = ReadingOrder['steps'][number];
 
@@ -121,7 +122,8 @@ export function firstChangedLine(hunk: Hunk): { lineNumber: number; side: Select
 export function hunkTargets<T>(items: readonly CodeViewDiffItem<T>[]): HunkTarget[] {
   const out: HunkTarget[] = [];
   for (const item of items) {
-    if (item.collapsed === true) continue;
+    // A preview's one hunk is a hidden stub, nothing to land on.
+    if (item.collapsed === true || isPreviewDiff(item.fileDiff)) continue;
     item.fileDiff.hunks.forEach((hunk, hunkIndex) => {
       out.push({ path: item.id, hunkIndex, ...firstChangedLine(hunk) });
     });

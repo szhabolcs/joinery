@@ -15,6 +15,7 @@ import { Check, ChevronDown, ChevronRight } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { CODE_INTEL_CSS } from '../lib/codeIntel.ts';
 import { makeLoadDiffFiles } from '../lib/diffLoader.ts';
+import { canSwitchView, PREVIEW_ANNOTATION_ID, PREVIEW_CSS, previewKindOf, type FileView } from '../lib/preview.ts';
 import { PREFERRED_HIGHLIGHTER } from '../lib/workerPool.tsx';
 import {
   DRAFT_THREAD_ID,
@@ -25,11 +26,12 @@ import {
 import { useTheme } from '../state/ThemeContext.tsx';
 import { useCodeIntel } from './CodeIntel.tsx';
 import { CommentComposer } from './CommentComposer.tsx';
+import { FilePreview } from './FilePreview.tsx';
 import { ReviewFooter } from './ReviewFooter.tsx';
 import { ReviewSummaryCard } from './ReviewSummaryCard.tsx';
 import { useSelectionComment } from './SelectionComment.tsx';
 import { ThreadArticle } from './ThreadArticle.tsx';
-import { Hint } from './controls.tsx';
+import { Hint, Segment, Segmented } from './controls.tsx';
 
 /**
  * Diff density, in one place. These are *both* the `@pierre/diffs` CSS custom
@@ -147,6 +149,8 @@ export function ReviewCodeView(): React.JSX.Element {
     codeViewRef,
     toggleFileCollapsed,
     setScrolledPath,
+    fileViewOf,
+    setFileView,
   } = useReview();
   const { chromeMode } = useTheme();
   const { active: selectionOffered, trackItem, overlay: selectionOverlay } = useSelectionComment(startDraftThread);
@@ -231,7 +235,7 @@ export function ReviewCodeView(): React.JSX.Element {
       expansionLineCount: 20,
       stickyHeaders: true,
       disableVirtualizationBuffers: false,
-      unsafeCSS: FILE_CARD_CSS + CODE_INTEL_CSS,
+      unsafeCSS: FILE_CARD_CSS + CODE_INTEL_CSS + PREVIEW_CSS,
       // Seams between file cards match the shell's 8px island gap.
       layout: { paddingTop: 0, paddingBottom: 80, gap: 8 },
       loadDiffFiles,
@@ -331,25 +335,41 @@ export function ReviewCodeView(): React.JSX.Element {
             '--diffs-font-size': '12.5px',
           } as React.CSSProperties
         }
-        // The right-hand side of each file's title bar: the GitHub-style
-        // "viewed" check. Kept to a single compact row so it stays
-        // inside the header's `1lh + gap * 3` min-height — a taller control
-        // here would silently invalidate DIFF_HEADER_HEIGHT above.
+        // The right-hand side of each file's title bar: the Diff/Preview
+        // switch for a file that has both, then the GitHub-style "viewed"
+        // check. Kept to a single compact row so it stays inside the header's
+        // `1lh + gap * 3` min-height — a taller control here would silently
+        // invalidate DIFF_HEADER_HEIGHT above.
         renderHeaderMetadata={(item: CodeViewItem<ThreadAnnotationMeta>) => {
           const entry = byPath.get(item.id);
           if (entry === undefined) return null;
           const viewed = isViewed(entry);
+          const kind = previewKindOf(entry.path);
+          const view = fileViewOf(entry.path);
           return (
-            <Hint label={viewed ? 'Viewed — unchecks itself when this file changes' : 'Mark as viewed'}>
-              <Checkbox.Root
-                checked={viewed}
-                onCheckedChange={() => void toggleViewed(entry.path)}
-                className="relative z-1 flex h-6 shrink-0 select-none items-center gap-1.5 rounded-md px-2 font-sans text-xs text-chrome-fg-muted transition-colors not-data-checked:hover:bg-chrome-bg-hover not-data-checked:hover:text-chrome-fg data-checked:bg-chrome-success-bg data-checked:text-chrome-success"
-              >
-                <Check size={12} strokeWidth={viewed ? 2.5 : 1.75} aria-hidden />
-                Viewed
-              </Checkbox.Root>
-            </Hint>
+            <div className="flex items-center gap-2">
+              {kind !== null && view !== null && canSwitchView(kind) && (
+                <Segmented<FileView>
+                  value={view}
+                  onChange={(next) => setFileView(entry.path, next)}
+                  aria-label={`View of ${entry.path}`}
+                  className="relative z-1 flex shrink-0 gap-0.5 font-sans"
+                >
+                  <Segment value="diff">Diff</Segment>
+                  <Segment value="preview">Preview</Segment>
+                </Segmented>
+              )}
+              <Hint label={viewed ? 'Viewed — unchecks itself when this file changes' : 'Mark as viewed'}>
+                <Checkbox.Root
+                  checked={viewed}
+                  onCheckedChange={() => void toggleViewed(entry.path)}
+                  className="relative z-1 flex h-6 shrink-0 select-none items-center gap-1.5 rounded-md px-2 font-sans text-xs text-chrome-fg-muted transition-colors not-data-checked:hover:bg-chrome-bg-hover not-data-checked:hover:text-chrome-fg data-checked:bg-chrome-success-bg data-checked:text-chrome-success"
+                >
+                  <Check size={12} strokeWidth={viewed ? 2.5 : 1.75} aria-hidden />
+                  Viewed
+                </Checkbox.Root>
+              </Hint>
+            </div>
           );
         }}
         renderHeaderPrefix={(item: CodeViewItem<ThreadAnnotationMeta>) => (
@@ -372,9 +392,13 @@ export function ReviewCodeView(): React.JSX.Element {
             </button>
           </Hint>
         )}
-        renderAnnotation={(...[annotation]: CodeViewAnnotationArgs<ThreadAnnotationMeta>) => {
+        renderAnnotation={(...[annotation, , item]: CodeViewAnnotationArgs<ThreadAnnotationMeta>) => {
           const meta = annotation.metadata;
           if (meta === undefined) return null;
+          if (meta.threadId === PREVIEW_ANNOTATION_ID) {
+            const entry = byPath.get(item.id);
+            return entry === undefined ? null : <FilePreview entry={entry} />;
+          }
           if (meta.threadId === DRAFT_THREAD_ID) {
             return (
               <div className="my-2 w-full max-w-2xl font-sans">

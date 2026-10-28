@@ -240,7 +240,7 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
   onPostRender: (node: HTMLElement, instance: unknown, phase: PostRenderPhase, context: TokenContext) => void;
   overlay: React.ReactNode;
 } {
-  const { review, fileList, items, codeViewRef, expandFileForNavigation } = useReview();
+  const { review, fileList, items, codeViewRef, expandFileForNavigation, showDiff } = useReview();
   const reviewId = review?.id ?? '';
   const blobs = useMemo(() => new Map(fileList.map((f) => [f.path, f.newBlob])), [fileList]);
 
@@ -459,6 +459,9 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
       revealSeq.current += 1;
       const seq = revealSeq.current;
       const live = () => seq === revealSeq.current;
+      // A previewed file (an image, rendered markdown) has no lines: back to its diff.
+      await showDiff(path);
+      if (!live()) return;
       // Its real patch replaces the placeholder in place (ReviewContext.tsx).
       await untilReady(() => !live() || item.fileDiff.cacheKey?.endsWith(':loading') !== true);
       if (!live()) return;
@@ -507,7 +510,7 @@ export function useCodeIntel({ hoverSuppressed = false }: { hoverSuppressed?: bo
         }
       }, JUMP_HIGHLIGHT_MS);
     },
-    [codeViewRef, expandFileForNavigation],
+    [codeViewRef, expandFileForNavigation, showDiff],
   );
 
   /** Leaves `from` for `to` in the diff, recorded in the jump history. */

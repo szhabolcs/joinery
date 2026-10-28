@@ -8,6 +8,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { Hono } from 'hono';
 import {
   addRepoBodySchema,
+  blobQuerySchema,
   setAllViewedBodySchema,
   resolveAllThreadsBodySchema,
   askAgentBodySchema,
@@ -81,6 +82,7 @@ import { buildReviewSummaries, getMeCached, getStoredPulls } from '../homebase.t
 import { searchPullsCached } from '../pullSearchCache.ts';
 import type { StoredCacheDeps } from '../storedCache.ts';
 import {
+  blobSideSize,
   canonicalizePath,
   defaultBranch as gitDefaultBranch,
   detectForge,
@@ -91,6 +93,7 @@ import {
   selectBranches,
   getFilePatch,
   listBranches,
+  readBlobSide,
   remoteHost,
   remoteIdentity,
   showToplevel,
@@ -117,6 +120,25 @@ export type RoutesDeps = {
 
 const diffQuerySchema = z.object({ path: z.string().min(1), rev: z.enum(['working', 'head', 'pr']).optional() });
 const filesQuerySchema = z.object({ rev: revisionSchema.optional() });
+
+/** Image types a preview can show; anything else is served as opaque bytes. */
+const IMAGE_CONTENT_TYPES: Record<string, string> = {
+  apng: 'image/apng',
+  avif: 'image/avif',
+  bmp: 'image/bmp',
+  gif: 'image/gif',
+  ico: 'image/x-icon',
+  jpeg: 'image/jpeg',
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  svg: 'image/svg+xml',
+  webp: 'image/webp',
+};
+
+function blobContentType(path: string): string {
+  const ext = /\.([^./]+)$/u.exec(path)?.[1]?.toLowerCase() ?? '';
+  return IMAGE_CONTENT_TYPES[ext] ?? 'application/octet-stream';
+}
 const threadsQuerySchema = z.object({
   status: z.enum(['open', 'resolved']).optional(),
   rev: revisionSchema.optional(),
@@ -567,6 +589,51 @@ export function buildRoutes(deps: RoutesDeps): Hono {
       catFile: engine.getCatFile(),
     });
     return c.json({ contents });
+  });
+
+  // One side of a changed file as raw bytes, for image previews. `HEAD`
+  // answers with the size alone (`X-Blob-Size`) so the client can hold back a
+  // large image. The ETag is the blob SHA, so an unchanged image revalidates
+  // to a 304. The bytes are the reviewed repo's content: they're served inert
+  // (`nosniff`, a sandboxing CSP, so an SVG opened directly runs nothing) and
+  // the web app only ever shows them through `<img>`.
+  app.get('/api/reviews/:id/blob', async (c) => {
+    const id = c.req.param('id');
+    const query = parseQuery(blobQuerySchema, c);
+    const engine = await requireEngine(deps, id);
+    const renderCtx = engine.getRenderContext();
+    if (query.rev !== undefined && query.rev !== renderCtx.revision) {
+      throw badRequest(
+        `only the review's current revision ("${renderCtx.revision}") can be fetched right now`,
+        `POST /api/reviews/${id}/revision with { "revision": "${query.rev}" } first`,
+      );
+    }
+    const entry = engine.getFileList().files.find((f) => f.path === query.path);
+    if (entry === undefined) throw notFound(`no diff entry for path "${query.path}"`);
+    const blob = query.side === 'old' ? entry.oldBlob : entry.newBlob;
+    if (blob === NULL_BLOB) throw notFound(`"${entry.path}" has no ${query.side} side`);
+
+    const path = query.side === 'old' ? (entry.oldPath ?? entry.path) : entry.path;
+    const params = { cwd: renderCtx.cwd, revision: renderCtx.revision, path, side: query.side, blob, catFile: engine.getCatFile() };
+    const etag = `"${blob}"`;
+    const headers = {
+      ETag: etag,
+      'Cache-Control': 'private, no-cache',
+      'Content-Type': blobContentType(path),
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+    };
+    if (c.req.header('if-none-match') === etag) return c.body(null, 304, headers);
+    if (c.req.method === 'HEAD') {
+      const size = await blobSideSize(params);
+      if (size === null) throw notFound(`could not read the ${query.side} side of "${entry.path}"`);
+      return c.body(null, 200, { ...headers, 'X-Blob-Size': String(size) });
+    }
+    const bytes = await readBlobSide(params);
+    if (bytes === null) throw notFound(`could not read the ${query.side} side of "${entry.path}"`);
+    // Both readers hand back plain `ArrayBuffer`-backed arrays (`slice()`
+    // and `readFile`), never a shared buffer.
+    return c.body(bytes as Uint8Array<ArrayBuffer>, 200, { ...headers, 'X-Blob-Size': String(bytes.byteLength) });
   });
 
   // --- language intelligence ---

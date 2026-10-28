@@ -60,6 +60,18 @@ import {
 import { getAgentModel, setGenerationModel } from '../lib/agentModel.ts';
 import { ApiError, callApi } from '../lib/apiClient.ts';
 import { blobPairKey, loadFileDiff, placeholderFileDiff } from '../lib/diffLoader.ts';
+import {
+  canSwitchView,
+  defaultView,
+  persistViews,
+  PREVIEW_ANNOTATION_ID,
+  previewFileDiff,
+  previewKey,
+  previewKindOf,
+  previewSide,
+  readStoredViews,
+  type FileView,
+} from '../lib/preview.ts';
 import { toggleReactionLocally } from '../lib/reactions.ts';
 import { localRun } from '../lib/runState.ts';
 import { useWatchTopics } from '../lib/liveQueries.ts';
@@ -304,6 +316,16 @@ export interface ReviewEngine extends ReviewEngineState {
    * overridden — those are excluded from any "expand all" action.
    */
   expandAllFiles: () => void;
+  /** A file's current view, or null when it has nothing to preview. */
+  fileViewOf: (path: string) => FileView | null;
+  /** Switch a previewable file between its diff and its preview, remembered for the session. */
+  setFileView: (path: string, view: FileView) => void;
+  /**
+   * Bring back a previewed file's diff, resolving once its lines are there
+   * to scroll to (at once for a file already showing it). Jumping to a
+   * thread goes through this, since a preview carries no threads.
+   */
+  showDiff: (path: string) => Promise<void>;
 }
 
 const ReviewCtx = createContext<ReviewEngine | null>(null);
@@ -418,6 +440,16 @@ export function ReviewProvider({
   // localStorage per review. Reloaded whenever `reviewId` changes, below.
   const collapseOverridesRef = useRef<Map<string, boolean>>(readStoredCollapseOverrides(reviewId));
 
+  // Per-file diff/preview choices (path -> view) for this browser session,
+  // reloaded with the review like the collapse overrides above.
+  const viewChoicesRef = useRef<Map<string, FileView>>(readStoredViews(reviewId));
+  const viewOf = useCallback((entry: FileEntry): FileView | null => {
+    const kind = previewKindOf(entry.path);
+    if (kind === null) return null;
+    if (!canSwitchView(kind)) return defaultView(kind);
+    return viewChoicesRef.current.get(entry.path) ?? defaultView(kind);
+  }, []);
+
   const revision = state.reviewState?.currentRevision;
   const revisionRef = useRef<Revision | undefined>(revision);
   revisionRef.current = revision;
@@ -459,11 +491,23 @@ export function ReviewProvider({
     [],
   );
 
+  // What an item carries: its threads, or, while it shows its preview,
+  // the one file-level annotation that renders it (see lib/preview.ts).
+  // `annotationsRef` keeps the threads either way.
+  const itemAnnotations = useCallback(
+    (entry: FileEntry, threadAnnotations: DiffLineAnnotation<ThreadAnnotationMeta>[]) =>
+      viewOf(entry) === 'preview'
+        ? [{ side: previewSide(entry), lineNumber: 0, metadata: { threadId: PREVIEW_ANNOTATION_ID } }]
+        : threadAnnotations,
+    [viewOf],
+  );
+
   const ensureItem = useCallback(
     (entry: FileEntry, threads: Thread[]) => {
       const existing = itemsRef.current.get(entry.path);
-      const annotations = buildAnnotationsFor(entry.path, threads);
-      annotationsRef.current.set(entry.path, annotations);
+      const threadAnnotations = buildAnnotationsFor(entry.path, threads);
+      annotationsRef.current.set(entry.path, threadAnnotations);
+      const annotations = itemAnnotations(entry, threadAnnotations);
       if (existing === undefined) {
         // The automatic default applies only to files the user
         // has never touched — an explicit override always wins, so a file
@@ -473,10 +517,10 @@ export function ReviewProvider({
         const item: CodeViewDiffItem<ThreadAnnotationMeta> = {
           id: entry.path,
           type: 'diff',
-          fileDiff: placeholderFileDiff(entry),
+          fileDiff: viewOf(entry) === 'preview' ? previewFileDiff(entry) : placeholderFileDiff(entry),
           annotations,
           version: 0,
-          collapsed: override ?? (entry.binary || entry.generated || isLargeFile(entry)),
+          collapsed: override ?? isAutoCollapsed(entry),
         };
         itemsRef.current.set(entry.path, { entry, item });
         return true;
@@ -491,17 +535,28 @@ export function ReviewProvider({
       notifyItemMutated(existing.item);
       return false;
     },
-    [buildAnnotationsFor, notifyItemMutated],
+    [buildAnnotationsFor, itemAnnotations, notifyItemMutated, viewOf],
   );
 
-  const loadPatchInto = useCallback((entry: FileEntry) => {
-    if (entry.binary) return;
+  const loadPatchInto = useCallback((entry: FileEntry): Promise<void> => {
+    if (viewOf(entry) === 'preview') {
+      // A preview needs no patch, only its stub (new blobs, new stub).
+      const rec = itemsRef.current.get(entry.path);
+      if (rec === undefined) return Promise.resolve();
+      rec.item.fileDiff = previewFileDiff(entry);
+      rec.item.version = (rec.item.version ?? 0) + 1;
+      notifyItemMutated(rec.item);
+      return Promise.resolve();
+    }
     const rev = revisionRef.current;
-    loadFileDiff(reviewId, entry, rev)
+    return loadFileDiff(reviewId, entry, rev)
       .then((fileDiff) => {
         const rec = itemsRef.current.get(entry.path);
-        if (rec === undefined) return;
+        // Switched to its preview while the patch was on its way.
+        if (rec === undefined || viewOf(rec.entry) === 'preview') return;
         rec.item.fileDiff = fileDiff;
+        // Coming back from a preview, the threads return with the code.
+        rec.item.annotations = itemAnnotations(rec.entry, annotationsRef.current.get(entry.path) ?? []);
         rec.item.version = (rec.item.version ?? 0) + 1;
         notifyItemMutated(rec.item);
         setItemsVersion((v) => v + 1);
@@ -509,7 +564,7 @@ export function ReviewProvider({
       .catch(() => {
         // Leave the placeholder in place; the file simply stays unloaded.
       });
-  }, [reviewId, notifyItemMutated]);
+  }, [reviewId, notifyItemMutated, viewOf, itemAnnotations]);
 
   const rebuildOrder = useCallback((fileList: FileEntry[], threads: Thread[]) => {
     let changedMembership = false;
@@ -544,11 +599,12 @@ export function ReviewProvider({
   // forever, since the refresh gave them new blobs but never refetched.
   useEffect(() => {
     for (const rec of itemsRef.current.values()) {
-      if (rec.item.fileDiff.cacheKey !== blobPairKey(rec.entry)) {
+      const expected = viewOf(rec.entry) === 'preview' ? previewKey(rec.entry) : blobPairKey(rec.entry);
+      if (rec.item.fileDiff.cacheKey !== expected) {
         loadPatchInto(rec.entry);
       }
     }
-  }, [loadTick, loadPatchInto]);
+  }, [loadTick, loadPatchInto, viewOf]);
 
   const load = useCallback(async () => {
     setState((s) => ({ ...s, loading: true, error: null }));
@@ -589,6 +645,7 @@ export function ReviewProvider({
     itemsRef.current = new Map();
     orderRef.current = [];
     collapseOverridesRef.current = readStoredCollapseOverrides(reviewId);
+    viewChoicesRef.current = readStoredViews(reviewId);
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reviewId]);
@@ -745,7 +802,7 @@ export function ReviewProvider({
       annotationsRef.current.set(path, next);
       const rec = itemsRef.current.get(path);
       if (rec !== undefined) {
-        rec.item.annotations = next;
+        rec.item.annotations = itemAnnotations(rec.entry, next);
         rec.item.version = (rec.item.version ?? 0) + 1;
         notifyItemMutated(rec.item);
       }
@@ -1136,11 +1193,50 @@ export function ReviewProvider({
       // Binary/over-2000-line/generated files are excluded from
       // "expand all" — unless the user has explicitly chosen to expand this
       // one, in which case that choice stands.
-      const autoCollapsed = rec.entry.binary || rec.entry.generated || isLargeFile(rec.entry);
-      if (autoCollapsed && !collapseOverridesRef.current.has(path)) continue;
+      if (isAutoCollapsed(rec.entry) && !collapseOverridesRef.current.has(path)) continue;
       setItemCollapsed(path, false, false);
     }
   }, [setItemCollapsed]);
+
+  const fileViewOf = useCallback(
+    (path: string): FileView | null => {
+      const rec = itemsRef.current.get(path);
+      return rec === undefined ? null : viewOf(rec.entry);
+    },
+    [viewOf],
+  );
+
+  // To the preview: swap in its stub and annotation at once. Back to the
+  // diff: leave the preview showing until the patch (usually a cache hit)
+  // lands, rather than flashing an empty card in between.
+  const setFileView = useCallback(
+    (path: string, view: FileView): Promise<void> => {
+      const rec = itemsRef.current.get(path);
+      if (rec === undefined || viewOf(rec.entry) === null || viewOf(rec.entry) === view) return Promise.resolve();
+      viewChoicesRef.current.set(path, view);
+      persistViews(reviewId, viewChoicesRef.current);
+      if (view === 'diff') return loadPatchInto(rec.entry);
+      rec.item.fileDiff = previewFileDiff(rec.entry);
+      rec.item.annotations = itemAnnotations(rec.entry, annotationsRef.current.get(path) ?? []);
+      rec.item.version = (rec.item.version ?? 0) + 1;
+      notifyItemMutated(rec.item);
+      setItemsVersion((v) => v + 1);
+      return Promise.resolve();
+    },
+    [reviewId, viewOf, loadPatchInto, itemAnnotations, notifyItemMutated],
+  );
+
+  // `CodeView` lays out the restored lines on a later frame than the
+  // mutation, and a line can only be scrolled to once it is laid out.
+  const showDiff = useCallback(
+    async (path: string) => {
+      const rec = itemsRef.current.get(path);
+      if (rec === undefined || viewOf(rec.entry) !== 'preview') return;
+      await setFileView(path, 'diff');
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    },
+    [setFileView, viewOf],
+  );
 
   const startDraftThread = useCallback((draft: DraftThread) => setDraftThread(draft), []);
   const cancelDraftThread = useCallback(() => {
@@ -1259,6 +1355,9 @@ export function ReviewProvider({
     expandFileForNavigation,
     collapseAllFiles,
     expandAllFiles,
+    fileViewOf,
+    setFileView: (path, view) => void setFileView(path, view),
+    showDiff,
   };
   // annotationsVersion is read only to satisfy the exhaustive-deps linter's
   // intent (annotationsByPath is a ref, so consumers re-render off version).
@@ -1362,6 +1461,15 @@ function annotationsEqual(
 function laterRun(current: AgentRun | null, fromResponse: AgentRun): AgentRun {
   const ended = current !== null && current.id === fromResponse.id && current.endedAt !== null;
   return ended && fromResponse.endedAt === null ? current : fromResponse;
+}
+
+/**
+ * Binary, generated and large files start collapsed, unless the reader
+ * chose otherwise. A binary file with a preview (an image) stays open: the
+ * preview is the point of it.
+ */
+function isAutoCollapsed(entry: FileEntry): boolean {
+  return (entry.binary && previewKindOf(entry.path) === null) || entry.generated || isLargeFile(entry);
 }
 
 function isLargeFile(entry: FileEntry): boolean {

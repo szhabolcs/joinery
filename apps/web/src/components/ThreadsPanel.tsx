@@ -18,7 +18,7 @@ function agentIsLooking(thread: Thread): boolean {
 }
 
 export function ThreadsPanel(): React.JSX.Element {
-  const { threads, threadRuns, toggleThreadsPanel, setSelectedPath, setActiveThreadId, codeViewRef } =
+  const { threads, threadRuns, toggleThreadsPanel, setSelectedPath, setActiveThreadId, codeViewRef, showDiff } =
     useReview();
   const [filter, setFilter] = useState<'open' | 'resolved'>('open');
   const visible = threads.filter((t) => t.status === filter);
@@ -27,13 +27,15 @@ export function ThreadsPanel(): React.JSX.Element {
     setSelectedPath(thread.path);
     // Jumping to a thread makes it the one `r` resolves and `]`/`[` continue from.
     setActiveThreadId(thread.id);
-    codeViewRef.current?.scrollTo({
-      type: 'line',
-      id: thread.path,
-      lineNumber: thread.startLine,
-      side: thread.side === 'old' ? 'deletions' : 'additions',
-      align: 'center',
-    });
+    void showDiff(thread.path).then(() =>
+      codeViewRef.current?.scrollTo({
+        type: 'line',
+        id: thread.path,
+        lineNumber: thread.startLine,
+        side: thread.side === 'old' ? 'deletions' : 'additions',
+        align: 'center',
+      }),
+    );
   };
 
   return (

@@ -127,9 +127,14 @@ packages/core  zod schemas shared by all three
 - **Data loading:**
   - The file list ships first, and per-file patches load on demand.
   - Blob reads are always batched into one `cat-file --batch`.
+- **Previews:**
+  - Images (SVG included) show both sides rendered; markdown can switch from its diff to the rendered file. The choice is per file, for the session.
+  - A preview is still the file's `CodeView` item: a one-line stub diff whose only annotation is file-level (`lineNumber: 0`), with the stub line hidden by CSS. Never a second view beside `CodeView`.
+  - Previews are view-only. A previewed item carries no thread annotations; they come back with the diff.
+  - Image bytes come from `GET /api/reviews/:id/blob`, ETagged by blob SHA and cached client-side by it. They are the reviewed repo's content, so the route serves them inert (`nosniff`, a sandboxing CSP) and the app shows them only through `<img>`, never inline. Over 10 MB waits for a click.
 - **Large files:**
-  - Binary files are stubs.
-  - Files over 2,000 lines or 500 KB, and generated or vendored files, start collapsed.
+  - Binary files are stubs, unless they have a preview.
+  - Binary files without a preview, files over 2,000 lines or 500 KB, and generated or vendored files start collapsed.
   - Submodules are ignored.
 - **Budget:** on a 300-file review, the file list renders in under 200 ms and the first visible file is highlighted in under 500 ms. Anything that makes either number worse is a regression.
 - **UI conventions:** see `CLAUDE.md`.

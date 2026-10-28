@@ -753,12 +753,15 @@ export function CommandPalette({
                       onSelect={() => {
                         if (review === null) return;
                         review.setSelectedPath(t.path);
-                        review.codeViewRef.current?.scrollTo({
-                          type: 'line',
-                          id: t.path,
-                          lineNumber: t.startLine,
-                          side: t.side === 'old' ? 'deletions' : 'additions',
-                        });
+                        const codeView = review.codeViewRef;
+                        void review.showDiff(t.path).then(() =>
+                          codeView.current?.scrollTo({
+                            type: 'line',
+                            id: t.path,
+                            lineNumber: t.startLine,
+                            side: t.side === 'old' ? 'deletions' : 'additions',
+                          }),
+                        );
                         // Open (not toggle) — jumping to a thread shouldn't close an already-open panel.
                         review.setActiveThreadId(t.id);
                         review.setThreadsPanelOpen(true);

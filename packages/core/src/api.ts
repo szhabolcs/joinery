@@ -7,6 +7,7 @@
  */
 import { z } from 'zod';
 import {
+  blobQuerySchema,
   fileContentsSchema,
   filePatchSchema,
 } from './domain/diff.ts';
@@ -540,6 +541,18 @@ export const api = {
     body: undefined,
     query: z.object({ path: z.string().min(1), rev: revisionSchema.optional() }),
     response: z.object({ contents: fileContentsSchema }),
+  }),
+  /**
+   * Raw bytes of one side of a changed file, not JSON: the web app reads it
+   * with `fetchBlob` (apps/web/src/lib/preview.ts), not `callApi`. `HEAD` answers
+   * with the size alone. The ETag is the blob SHA.
+   */
+  getBlob: def({
+    method: 'GET',
+    path: (id: string) => `/api/reviews/${encodeURIComponent(id)}/blob`,
+    body: undefined,
+    query: blobQuerySchema,
+    response: z.instanceof(Blob),
   }),
   getHover: def({
     method: 'GET',

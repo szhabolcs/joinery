@@ -41,3 +41,14 @@ export const diffQuerySchema = z.object({
   rev: revisionSchema.optional(),
 });
 export type DiffQuery = z.infer<typeof diffQuerySchema>;
+
+export const blobSideSchema = z.enum(['old', 'new']);
+export type BlobSide = z.infer<typeof blobSideSchema>;
+
+/** One side of one changed file, as raw bytes: what image previews load. */
+export const blobQuerySchema = z.object({
+  path: z.string().min(1),
+  side: blobSideSchema,
+  rev: revisionSchema.optional(),
+});
+export type BlobQuery = z.infer<typeof blobQuerySchema>;

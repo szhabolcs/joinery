@@ -6,7 +6,7 @@
  * the diff to `-U<contextLines>` up front rather than fetching full unified
  * context and trimming client-side twice.
  */
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { NULL_BLOB, type FileContents, type FilePatch, type Revision } from '@joinery/core';
 import type { CatFile } from './catfile.ts';
@@ -141,6 +141,55 @@ export async function getFileContents(params: GetFileContentsParams): Promise<Fi
     oldBlob: params.oldBlob,
     newBlob: params.newBlob,
   };
+}
+
+export type BlobSideParams = {
+  /** The attached worktree root; only read from for a `working` revision's new side. */
+  cwd: string;
+  revision: Revision;
+  /** The side's own path (the old path of a rename for the old side). */
+  path: string;
+  side: 'old' | 'new';
+  /** The side's blob SHA; never `NULL_BLOB` (that side doesn't exist). */
+  blob: string;
+  catFile: CatFile;
+};
+
+/**
+ * Whether this side lives on disk rather than in the object store: a
+ * `working` revision's new side, whose SHA came from `hash-object` without
+ * `-w` (see `getFileContents`).
+ */
+function onDisk(params: BlobSideParams): boolean {
+  return params.revision === 'working' && params.side === 'new';
+}
+
+/** One side's raw bytes, for image previews. Null when it can't be read. */
+export async function readBlobSide(params: BlobSideParams): Promise<Uint8Array | null> {
+  if (!onDisk(params)) return params.catFile.readBlob(params.blob);
+  try {
+    return new Uint8Array(await readFile(join(params.cwd, params.path)));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One side's size in bytes without reading it, so a preview can ask before
+ * loading a large image. Null when it can't be read.
+ */
+export async function blobSideSize(params: BlobSideParams): Promise<number | null> {
+  if (onDisk(params)) {
+    try {
+      return (await stat(join(params.cwd, params.path))).size;
+    } catch {
+      return null;
+    }
+  }
+  const result = await git(['cat-file', '-s', params.blob], { cwd: params.cwd });
+  if (result.exitCode !== 0) return null;
+  const size = Number(decoder.decode(result.stdout).trim());
+  return Number.isInteger(size) ? size : null;
 }
 
 function decodeBlobOrNull(bytes: Uint8Array | null): string | null {

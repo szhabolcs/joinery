@@ -66,6 +66,7 @@ export function useReviewShortcuts(): ShortcutActions {
     setActiveThreadId,
     codeViewRef,
     expandFileForNavigation,
+    showDiff,
     startDraftThread,
     reloadThreads,
   } = review;
@@ -144,7 +145,9 @@ export function useReviewShortcuts(): ShortcutActions {
     setActiveThreadId(next.id);
     reveal(next.path);
     // The card renders under the thread's last line, so centre on that.
-    scrollToLine(next.path, next.endLine, next.side === 'old' ? 'deletions' : 'additions');
+    void showDiff(next.path).then(() =>
+      scrollToLine(next.path, next.endLine, next.side === 'old' ? 'deletions' : 'additions'),
+    );
   };
 
   const resolveThread = () => {
