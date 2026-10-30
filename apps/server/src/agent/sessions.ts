@@ -124,7 +124,8 @@ export async function removeLocalTranscript(sessionId: string): Promise<void> {
   const projects = join(process.env['CLAUDE_CONFIG_DIR'] ?? join(homedir(), '.claude'), 'projects');
   let dirs: string[];
   try {
-    dirs = await readdir(projects);
+    // Directories only: Bun's rm fails (EFAULT on macOS) on a path through a file such as `.DS_Store`.
+    dirs = (await readdir(projects, { withFileTypes: true })).filter((e) => e.isDirectory()).map((e) => e.name);
   } catch {
     return;
   }
