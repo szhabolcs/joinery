@@ -1,6 +1,6 @@
 /**
  * The seam between Joinery and a code host: everything that talks to
- * GitHub or GitLab lives behind `Forge`. Every method follows one
+ * GitHub, GitLab or Gitea lives behind `Forge`. Every method follows one
  * rule: a missing or unauthenticated host CLI is data ("unavailable", `null`),
  * never a thrown error — callers never wrap these in a try/catch to stay up.
  * Pick an implementation with `forgeFor(repo)`.
@@ -51,7 +51,7 @@ export type PullSearchHit = {
 
 export interface Forge {
   /** `'none'`: the repo's remote isn't a supported host; every call reports unavailable. */
-  readonly kind: 'github' | 'gitlab' | 'none';
+  readonly kind: 'github' | 'gitlab' | 'gitea' | 'none';
   /** The host CLI the user needs, for error messages. */
   readonly cli: string;
   /** What to tell the user when a pull can't be resolved. */

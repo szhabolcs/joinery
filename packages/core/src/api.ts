@@ -200,19 +200,19 @@ export type VersionInfo = z.infer<typeof versionInfoSchema>;
  * The settings page's health check. `git` is the `git` on PATH, which
  * everything needs. `claude` is the executable thread
  * replies run (`bundled` in a source checkout, where the Agent SDK uses its
- * own). `clis` says whether `gh`/`glab` are on PATH; `hosts` is one row per
+ * own). `clis` says whether `gh`/`glab`/`gt` are on PATH; `hosts` is one row per
  * forge host the registered repos point at, with why its CLI can't be asked
  * (`reason`), or null when it can.
  */
 export const integrationsSchema = z.object({
   git: z.object({ path: z.string().nullable() }),
   claude: z.object({ path: z.string().nullable(), bundled: z.boolean() }),
-  clis: z.array(z.object({ cli: z.enum(['gh', 'glab']), path: z.string().nullable() })),
+  clis: z.array(z.object({ cli: z.enum(['gh', 'glab', 'gt']), path: z.string().nullable() })),
   hosts: z.array(
     z.object({
       host: z.string(),
-      forge: z.enum(['github', 'gitlab']),
-      cli: z.enum(['gh', 'glab']),
+      forge: z.enum(['github', 'gitlab', 'gitea']),
+      cli: z.enum(['gh', 'glab', 'gt']),
       repos: z.number().int().nonnegative(),
       reason: forgeUnavailableReasonSchema.exclude(['unsupported-host']).nullable(),
     }),
