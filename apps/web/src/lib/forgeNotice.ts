@@ -1,5 +1,8 @@
 import type { ForgeKind, ForgeUnavailableReason } from '@joinery/core';
 
+/** The host CLI each forge is asked through. */
+export const FORGE_CLI = { github: 'gh', gitlab: 'glab', gitea: 'gt' } as const;
+
 /** Why a repo's forge couldn't be asked, with the host and (when known) the forge it refers to. */
 export type ForgeNotice = { reason: ForgeUnavailableReason; host: string | null; forge: ForgeKind | null };
 
@@ -11,16 +14,16 @@ export type ForgeNotice = { reason: ForgeUnavailableReason; host: string | null;
  */
 export function forgeNoticeText(notice: ForgeNotice | null | undefined, task: 'list' | 'search'): string | null {
   if (notice === null || notice === undefined) return null;
-  const cli = notice.forge === 'github' ? 'gh' : notice.forge === 'gitlab' ? 'glab' : null;
+  const cli = notice.forge === null || notice.forge === 'none' ? null : FORGE_CLI[notice.forge];
   const noun = notice.forge === 'gitlab' ? 'merge requests' : 'pull requests';
   const what = task === 'search' ? `search ${noun}` : `see open ${noun}`;
   switch (notice.reason) {
     case 'unreachable':
       return `Can't reach ${notice.host ?? 'the git host'}`;
     case 'not-authenticated':
-      return `Sign in to ${cli ?? 'gh or glab'} to ${what}`;
+      return `Sign in to ${cli ?? 'gh, glab or gt'} to ${what}`;
     case 'missing-cli':
-      return `Install ${cli ?? 'gh or glab'} to ${what}`;
+      return `Install ${cli ?? 'gh, glab or gt'} to ${what}`;
     case 'unsupported-host':
       return null;
   }

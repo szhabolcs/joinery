@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { revisionSchema } from './files.ts';
 
-export const forgeKindSchema = z.enum(['github', 'gitlab', 'none']);
+export const forgeKindSchema = z.enum(['github', 'gitlab', 'gitea', 'none']);
 export type ForgeKind = z.infer<typeof forgeKindSchema>;
 
 /**

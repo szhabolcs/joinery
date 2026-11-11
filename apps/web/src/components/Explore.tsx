@@ -456,7 +456,7 @@ export function ExploreSection(): React.JSX.Element {
                       {loading ? (
                         <Empty>Loading…</Empty>
                       ) : pullsUnavailable ? (
-                        <Empty>{pullsNoticeText ?? 'Install and sign in to `gh` or `glab` to list pull requests.'}</Empty>
+                        <Empty>{pullsNoticeText ?? 'Install and sign in to `gh`, `glab` or `gt` to list pull requests.'}</Empty>
                       ) : pulls.length === 0 ? (
                         <Empty>{`No open pull requests match "${q.trim()}".`}</Empty>
                       ) : (
@@ -486,7 +486,7 @@ export function ExploreSection(): React.JSX.Element {
                     <section className="flex flex-col gap-2">
                       <SectionHeading title="More pull requests" count={found.length} />
                       {found.length === 0 ? (
-                        <Empty>{searching ? 'Searching…' : forgeNoticeText(searchState.notice, 'search') ?? 'Install and sign in to `gh` or `glab` to search pull requests.'}</Empty>
+                        <Empty>{searching ? 'Searching…' : forgeNoticeText(searchState.notice, 'search') ?? 'Install and sign in to `gh`, `glab` or `gt` to search pull requests.'}</Empty>
                       ) : (
                         <ul
                           role="listbox"

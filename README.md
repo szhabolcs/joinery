@@ -85,7 +85,8 @@ Search every branch and PR across your repos.
 ## Install
 
 Joinery runs on macOS (Apple Silicon) and Linux (x64, arm64). You'll need `git`, the GitHub CLI
-(`gh auth login`), and Claude Code (logged in) on your PATH.
+(`gh auth login`), and Claude Code (logged in) on your PATH. For GitLab or Gitea repositories, use
+`glab` or [`gt`](https://gitea.com/gitea/cli) (`gt auth login`) instead of `gh`.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/szhabolcs/joinery/main/scripts/install.sh | sh

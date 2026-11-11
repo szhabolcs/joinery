@@ -486,7 +486,7 @@ export function Homebase(): React.JSX.Element {
                         <p className="rounded-lg border border-dashed border-chrome-border px-4 py-6 text-center text-xs text-chrome-fg-muted">
                           {noPullsNotice ?? (
                             <>
-                              Install and sign in to <code>gh</code> or <code>glab</code> to see open pull requests here.
+                              Install and sign in to <code>gh</code>, <code>glab</code> or <code>gt</code> to see open pull requests here.
                             </>
                           )}
                         </p>

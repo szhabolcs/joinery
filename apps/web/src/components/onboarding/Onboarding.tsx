@@ -6,7 +6,7 @@
  *  - Repositories: the add-repo folder picker, with a heads-up about the
  *    macOS folder prompt until Full Disk Access is granted.
  *  - Tooling: the settings page's integrations check in three groups —
- *    basics (git, Claude Code), forges (`gh`, `glab`), each with the fix
+ *    basics (git, Claude Code), forges (`gh`, `glab`, `gt`), each with the fix
  *    when it isn't ready, and language servers, switched on per language
  *    as on the settings page.
  *  - Make it yours: light/dark and the theme, over a mock review window
@@ -37,11 +37,12 @@ import { listThemeOptions } from '../../lib/themes.ts';
 import { useHomeData } from '../../state/HomeData.tsx';
 import { useTheme } from '../../state/ThemeContext.tsx';
 import { repoLabel } from '../Explore.tsx';
-import { GitHubMark, GitLabMark, GitMark, LANGUAGE_MARK } from '../brandMarks.tsx';
+import { GiteaMark, GitHubMark, GitLabMark, GitMark, LANGUAGE_MARK } from '../brandMarks.tsx';
 import { FolderPicker } from '../home/FolderPicker.tsx';
 import { Chip, type Tone } from '../home/primitives.tsx';
 import { LSP_TITLE, useLanguageServerPicker } from '../settings/LanguageServerPicker.tsx';
-import { REASON, hostHint } from '../settings/Settings.tsx';
+import { REASON, hostHint, installHint } from '../settings/Settings.tsx';
+import { FORGE_CLI } from '../../lib/forgeNotice.ts';
 import { ThemePicker } from '../settings/ThemePicker.tsx';
 import { Hint, SEGMENT_CLASS, Segment, Segmented } from '../controls.tsx';
 import { MockReview } from './MockReview.tsx';
@@ -328,7 +329,7 @@ function WelcomeStep(): React.JSX.Element {
 
 // --- Repositories ---
 
-const FORGE_LABEL = { github: 'GitHub', gitlab: 'GitLab', none: 'No forge' } as const;
+const FORGE_LABEL = { github: 'GitHub', gitlab: 'GitLab', gitea: 'Gitea', none: 'No forge' } as const;
 
 function ReposStep(): React.JSX.Element {
   const { repos, refresh } = useHomeData();
@@ -447,11 +448,11 @@ function claudeStatus(data: Integrations): ToolStatus {
 }
 
 /** A forge's CLI: missing, or the first registered host it can't ask, or fine. Only a host in use makes a missing CLI a problem. */
-function forgeStatus(data: Integrations, forge: 'github' | 'gitlab'): ToolStatus {
-  const cli = forge === 'github' ? 'gh' : 'glab';
+function forgeStatus(data: Integrations, forge: keyof typeof FORGE_CLI): ToolStatus {
+  const cli = FORGE_CLI[forge];
   const path = data.clis.find((c) => c.cli === cli)?.path ?? null;
   const hosts = data.hosts.filter((h) => h.forge === forge);
-  if (path === null) return { tone: hosts.length > 0 ? 'danger' : 'neutral', label: 'Not installed', fix: `brew install ${cli}` };
+  if (path === null) return { tone: hosts.length > 0 ? 'danger' : 'neutral', label: 'Not installed', fix: installHint(cli) };
   const failing = hosts.find((h) => h.reason !== null);
   if (failing?.reason != null) {
     const { tone, label } = REASON[failing.reason];
@@ -477,6 +478,7 @@ const BASICS: Tool[] = [
 const FORGES: Tool[] = [
   { key: 'github', icon: <GitHubMark />, title: 'GitHub', why: 'Through the gh CLI', status: (d) => forgeStatus(d, 'github') },
   { key: 'gitlab', icon: <GitLabMark />, title: 'GitLab', why: 'Through the glab CLI', status: (d) => forgeStatus(d, 'gitlab') },
+  { key: 'gitea', icon: <GiteaMark />, title: 'Gitea', why: 'Through the gt CLI', status: (d) => forgeStatus(d, 'gitea') },
 ];
 
 function ToolsStep(): React.JSX.Element {
