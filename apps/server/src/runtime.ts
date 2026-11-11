@@ -65,6 +65,8 @@ export function runsAsService(): boolean {
 
 /** The command that opens a URL or file with the desktop's default app. */
 export function openCommand(target: string): string[] {
+  // Not `cmd /c start`: cmd would parse the target as shell syntax.
+  if (process.platform === 'win32') return ['rundll32', 'url.dll,FileProtocolHandler', target];
   return process.platform === 'darwin' ? ['open', target] : ['xdg-open', target];
 }
 

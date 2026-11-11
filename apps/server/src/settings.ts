@@ -114,6 +114,19 @@ export function restartServer(): void {
   child.unref();
 }
 
+/** Total file bytes under `dir`, for Windows, which has no `du`. Links aren't followed. */
+async function walkedSize(dir: string): Promise<number> {
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  const sizes = await Promise.all(
+    entries.map((entry) => {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) return walkedSize(full);
+      return entry.isFile() ? fileSize(full) : 0;
+    }),
+  );
+  return sizes.reduce((total, size) => total + size, 0);
+}
+
 /** Total bytes on disk under `path`, via `du` (fast on a big tree); 0 when it's missing. */
 async function diskUsage(path: string): Promise<number> {
   try {
@@ -121,6 +134,7 @@ async function diskUsage(path: string): Promise<number> {
   } catch {
     return 0;
   }
+  if (process.platform === 'win32') return walkedSize(path);
   const proc = Bun.spawn(['du', '-sk', path], { stdout: 'pipe', stderr: 'ignore' });
   const out = await new Response(proc.stdout).text();
   await proc.exited;

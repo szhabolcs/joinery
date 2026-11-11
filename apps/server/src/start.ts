@@ -54,7 +54,7 @@ export async function startServer(): Promise<void> {
   } catch (err) {
     if ((err as { code?: unknown }).code !== 'EADDRINUSE') throw err;
     throw new Error(
-      `port ${String(port)} is already in use (see \`lsof -i :${String(port)}\`); ` +
+      `port ${String(port)} is already in use (see \`${process.platform === 'win32' ? `netstat -ano | findstr :${String(port)}` : `lsof -i :${String(port)}`}\`); ` +
         `set another in ${portFile()} or with JOINERY_PORT`,
     );
   }

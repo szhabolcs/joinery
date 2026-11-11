@@ -15,7 +15,7 @@ packages/core  zod schemas shared by all three
 - The server listens on `127.0.0.1:7317` only. It uses a bearer token in `data/token` (mode 0600).
 - All state lives in `data/` inside the app, or `JOINERY_DATA_DIR`, never in dot-folders. `data/` is gitignored; never `git add -f` it.
 - Agents reach the app through the CLI, the HTTP API and `SKILL.md`. There is no MCP server for outside agents.
-- macOS and linux only for now.
+- macOS and linux, plus Windows from a source checkout (no release build or background service; `data/token`'s mode 0600 is not enforced there, so it relies on the folder's ACL).
 
 ## Reviews
 
