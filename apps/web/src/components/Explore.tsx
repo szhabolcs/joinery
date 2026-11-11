@@ -42,6 +42,7 @@ import { Hint, Segment, Segmented } from './controls.tsx';
 import { FolderPicker } from './home/FolderPicker.tsx';
 import { Panel } from './home/Panel.tsx';
 import { Avatar, Chip, CiIcon, EffortMeter, SectionHeading, type Tone } from './home/primitives.tsx';
+import { pathSegments } from '../lib/paths.ts';
 
 const BRANCH_DEBOUNCE_MS = 200;
 const BRANCH_LIMIT = 50;
@@ -99,9 +100,7 @@ function isReviewing(status: ReviewStatus | null): boolean {
 /** A repo's short name: its remote's, else its folder's. */
 export function repoLabel(r: Repo): string {
   if (r.remoteName !== null) return r.remoteName;
-  const trimmed = r.rootPath.replace(/\/+$/, '');
-  const segments = trimmed.split('/');
-  return segments[segments.length - 1] || r.rootPath;
+  return pathSegments(r.rootPath).at(-1) ?? r.rootPath;
 }
 
 export function ExploreSection(): React.JSX.Element {

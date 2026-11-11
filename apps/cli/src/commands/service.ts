@@ -202,6 +202,9 @@ export const service: Command = {
   async run(argv) {
     const parsed = parseCommand(argv);
     if (wantsHelp(parsed)) return printLine(service.usage);
+    if (process.platform === 'win32') {
+      throw new Error('the background service is not available on Windows; run `joinery serve` or start-joinery.cmd instead');
+    }
     const action = parsed.positionals[0];
     if (action === 'install') return install();
     if (action === 'uninstall') return uninstall();

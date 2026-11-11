@@ -119,6 +119,20 @@ rm -rf ~/.joinery ~/.local/bin/joinery
 
 Your data lives in `~/.joinery/data`, so keep it if you plan to reinstall.
 
+## Windows
+
+There is no release build for Windows, so it runs from a checkout. You'll need
+[Bun](https://bun.sh) (`npm install -g bun`), `git`, the GitHub CLI and Claude
+Code on your PATH. Keep the checkout in a folder only you can read, such as your
+user profile: it holds `data/token`, and Windows doesn't enforce its 0600 mode.
+
+```bat
+start-joinery.cmd        :: build, start the server, open the browser
+joinery.cmd open         :: the CLI, while the server is running
+```
+
+`joinery service` and `joinery update` aren't available; run `git pull` to update.
+
 ## Development
 
 ```sh

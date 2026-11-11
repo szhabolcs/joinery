@@ -10,6 +10,7 @@
  * `--output=<file>`), and paths go after `--`. Everything runs through the
  * `git()` runner and its allowlist, in the run's `cwd`, with capped output.
  */
+import { isAbsolute } from 'node:path';
 import { createSdkMcpServer, tool, type McpSdkServerConfigWithInstance, type SdkMcpToolDefinition } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { bytesToText, git } from '../git/run.ts';
@@ -31,7 +32,7 @@ const pathSchema = z
   .string()
   .min(1)
   .max(500)
-  .refine((s) => !s.startsWith('/') && !s.startsWith('-') && !s.split(/[\\/]/).includes('..'), 'must be a relative path inside the repo');
+  .refine((s) => !s.startsWith('/') && !isAbsolute(s) && !/^[a-zA-Z]:/.test(s) && !s.startsWith('-') && !s.split(/[\\/]/).includes('..'), 'must be a relative path inside the repo');
 
 function textResult(text: string): { content: [{ type: 'text'; text: string }] } {
   return { content: [{ type: 'text', text }] };

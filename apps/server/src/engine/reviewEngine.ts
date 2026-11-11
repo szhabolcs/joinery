@@ -92,6 +92,7 @@ export type ReviewEngineParams = {
  *   .git/refs/review/<id>            root watch, collapsed onto the main clone
  *   .git/refs/review/<id>.lock       the transient lock git writes first
  *   .git/logs/refs/review/<id>       the reflog, when core.logAllRefUpdates is on
+ *   refs, .git/refs                  Windows also reports the parent when the first pin creates `refs/review`
  *
  * So this matches a `refs/review/` path *segment* anywhere. The theoretical
  * cost is swallowing a signal for a tracked source file that genuinely lives
@@ -101,10 +102,15 @@ export type ReviewEngineParams = {
 function isOwnRefWrite(filename: string | Buffer | null): boolean {
   if (filename === null) return false;
   const name = (typeof filename === 'string' ? filename : filename.toString('utf8')).replaceAll('\\', '/');
+  if (name === 'refs' || name === '.git/refs') return true; // a real change inside still reports its own path
   return name === 'refs/review' || name.startsWith('refs/review/') || name.includes('/refs/review/');
 }
 
-/** True when `child` is `parent` or nested under it (both already realpaths). */
+/**
+ * True when `child` is `parent` or nested under it (both already realpaths).
+ * The `/` is deliberate on Windows too: there `.git` must keep its own watch,
+ * because only that watch marks `head` stale after a commit.
+ */
 function isUnderOrEqual(child: string, parent: string): boolean {
   if (child === parent) return true;
   const withSlash = parent.endsWith('/') ? parent : `${parent}/`;
