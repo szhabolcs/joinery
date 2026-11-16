@@ -44,7 +44,8 @@ describe('data directory resolution', () => {
       expect(token.length).toBeGreaterThan(10);
 
       const s = await stat(paths.tokenFile);
-      expect(s.mode & 0o777).toBe(0o600);
+      // Windows has no POSIX modes; the folder's ACL protects the token there.
+      if (process.platform !== 'win32') expect(s.mode & 0o777).toBe(0o600);
 
       const read = await readToken(paths);
       expect(read).toBe(token);

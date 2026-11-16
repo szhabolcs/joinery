@@ -21,7 +21,10 @@ export async function setupTestDb(): Promise<TestDb> {
     dir,
     close: async () => {
       opened.sqlite.close();
-      await rm(dir, { recursive: true, force: true });
+      await rm(dir, { recursive: true, force: true }).catch((err: NodeJS.ErrnoException) => {
+        // Windows won't delete a database a not-yet-collected prepared statement holds open.
+        if (process.platform !== 'win32' || err.code !== 'EBUSY') throw err;
+      });
     },
   };
 }

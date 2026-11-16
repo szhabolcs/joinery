@@ -65,7 +65,9 @@ async function isDir(path: string): Promise<boolean> {
 
 export async function listDirs(rawPath: string | undefined, hidden: boolean): Promise<DirListing> {
   let wanted = rawPath === undefined || rawPath === '' ? homedir() : rawPath;
-  if (wanted === '~' || wanted.startsWith('~/')) wanted = join(homedir(), wanted.slice(1));
+  if (wanted === '~' || wanted.startsWith('~/') || wanted.startsWith('~\\')) wanted = join(homedir(), wanted.slice(1));
+  // A bare drive (`D:`) means that drive's current directory to Windows; the picker means its root.
+  if (process.platform === 'win32' && /^[a-zA-Z]:$/.test(wanted)) wanted = `${wanted}\\`;
   if (!isAbsolute(wanted)) throw badRequest(`path must be absolute, got: ${wanted}`);
 
   let path: string;

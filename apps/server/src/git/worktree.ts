@@ -16,7 +16,7 @@
  * git subcommand that could touch a worktree we did not create.
  */
 import { rm } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join, normalize, resolve, sep } from 'node:path';
 import { canonicalizePath } from './paths.ts';
 import { git, gitOrThrow, type GitCallOptions } from './run.ts';
 
@@ -109,7 +109,8 @@ export function parseWorktreeListPorcelain(text: string): WorktreeEntry[] {
 export async function listWorktrees(options: GitCallOptions): Promise<WorktreeEntry[]> {
   const result = await gitOrThrow(['worktree', 'list', '--porcelain'], options);
   const text = new TextDecoder().decode(result.stdout);
-  return parseWorktreeListPorcelain(text);
+  // Git for Windows reports `C:/...`; everything here compares native paths.
+  return parseWorktreeListPorcelain(text).map((entry) => ({ ...entry, path: normalize(entry.path) }));
 }
 
 /**
@@ -200,8 +201,8 @@ export type ScopedRemoveParams = {
  * function itself cannot be used to remove anything but our own cache.
  */
 export async function scopedRemoveWorktree(params: ScopedRemoveParams): Promise<void> {
-  const normalizedDataDir = `${resolve(params.dataDir)}/`;
-  const normalizedWorktreePath = `${resolve(params.worktreePath)}/`;
+  const normalizedDataDir = `${resolve(params.dataDir)}${sep}`;
+  const normalizedWorktreePath = `${resolve(params.worktreePath)}${sep}`;
   if (!normalizedWorktreePath.startsWith(normalizedDataDir)) {
     throw new Error(
       `refusing to remove worktree outside data dir: ${params.worktreePath} (data dir: ${params.dataDir})`,

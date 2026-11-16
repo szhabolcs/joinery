@@ -40,7 +40,10 @@ export async function makeTempDir(prefix: string): Promise<string> {
 }
 
 export async function removeTempDir(dir: string): Promise<void> {
-  await rm(dir, { recursive: true, force: true });
+  await rm(dir, { recursive: true, force: true }).catch((err: NodeJS.ErrnoException) => {
+    // Windows won't delete a database a not-yet-collected prepared statement holds open.
+    if (process.platform !== 'win32' || err.code !== 'EBUSY') throw err;
+  });
 }
 
 export async function initRepo(dir: string): Promise<void> {

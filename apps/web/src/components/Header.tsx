@@ -17,6 +17,7 @@ import { useReview } from '../state/ReviewContext.tsx';
 import { useReviewPull } from './ReviewSummaryCard.tsx';
 import { RevisionPicker } from './RevisionPicker.tsx';
 import { Hint } from './controls.tsx';
+import { pathSegments } from '../lib/paths.ts';
 
 /**
  * "Start review" / "Reopen review" — moves a `draft`/`archived` review to
@@ -117,7 +118,7 @@ export function Header({ onOpenPalette }: { onOpenPalette: () => void }): React.
   const pull = useReviewPull(review?.id);
   const threadsShown = rightPanelOpen && threadsPanelOpen;
 
-  const repoName = repo?.rootPath.split('/').filter(Boolean).at(-1);
+  const repoName = repo == null ? undefined : pathSegments(repo.rootPath).at(-1);
 
   return (
     <header className="chrome-island flex h-11 shrink-0 items-center gap-1 px-2">

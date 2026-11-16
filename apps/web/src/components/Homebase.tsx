@@ -56,6 +56,7 @@ import { QueueFilterMenu, QueueSortMenu, type QueueSort } from './home/QueueMenu
 import { ExploreSection } from './Explore.tsx';
 import { UpdateButton, useVersion, VersionText } from './home/VersionBadge.tsx';
 import { FolderPicker } from './home/FolderPicker.tsx';
+import { pathSegments } from '../lib/paths.ts';
 
 type Order = 'effort' | 'recent';
 
@@ -102,8 +103,7 @@ const DATE = new Intl.DateTimeFormat('en', { weekday: 'long', day: 'numeric', mo
 /** `remoteName` when known, else the last path segment of `rootPath`. */
 function repoDisplayName(repo: Repo): string {
   if (repo.remoteName !== null) return repo.remoteName;
-  const segments = repo.rootPath.split('/').filter((s) => s.length > 0);
-  return segments[segments.length - 1] ?? repo.rootPath;
+  return pathSegments(repo.rootPath).at(-1) ?? repo.rootPath;
 }
 
 function reviewTitle(review: Review, summary: ReviewSummary): string {

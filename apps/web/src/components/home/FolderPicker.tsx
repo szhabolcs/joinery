@@ -16,6 +16,7 @@ import type { Repo } from '@joinery/core';
 import { ApiError } from '../../lib/apiClient.ts';
 import { useHomeData, type AddReposResult, type ListDirsResult } from '../../state/HomeData.tsx';
 import { Hint } from '../controls.tsx';
+import { isWindowsPath, pathSegments } from '../../lib/paths.ts';
 
 interface Props {
   /** Called once everything requested was added. */
@@ -30,14 +31,19 @@ const ITEM_CLASS =
 /** cmdk item value for the "add the folder you're in" row; can't collide with a name (no `/` in names). */
 const ADD_CURRENT = '/add-current';
 
-/** `/a/b` -> `[{ name: 'a', path: '/a' }, { name: 'b', path: '/a/b' }]`. */
+/** `/a/b` -> `[{ name: 'a', path: '/a' }, { name: 'b', path: '/a/b' }]`; `C:\a` -> `[{ name: 'C:', path: 'C:\' }, { name: 'a', path: 'C:\a' }]`. */
 function crumbsOf(path: string): { name: string; path: string }[] {
-  const parts = path.split('/').filter((p) => p !== '');
-  return parts.map((name, i) => ({ name, path: `/${parts.slice(0, i + 1).join('/')}` }));
+  const parts = pathSegments(path);
+  if (!isWindowsPath(path)) return parts.map((name, i) => ({ name, path: `/${parts.slice(0, i + 1).join('/')}` }));
+  const prefix = path.startsWith('\\\\') ? '\\\\' : '';
+  return parts.map((name, i) => ({
+    name,
+    path: `${prefix}${parts.slice(0, i + 1).join('\\')}${i === 0 && prefix === '' ? '\\' : ''}`,
+  }));
 }
 
 function baseName(path: string): string {
-  return path.split('/').filter((p) => p !== '').at(-1) ?? path;
+  return pathSegments(path).at(-1) ?? path;
 }
 
 export function FolderPicker({ onAdded, onCancel }: Props): React.JSX.Element {
@@ -55,7 +61,7 @@ export function FolderPicker({ onAdded, onCancel }: Props): React.JSX.Element {
   const inputRef = useRef<HTMLInputElement>(null);
 
   // A query that starts like a path is a "go to" (↵), not a filter.
-  const isPathQuery = query.startsWith('/') || query.startsWith('~');
+  const isPathQuery = query.startsWith('/') || query.startsWith('~') || /^([a-zA-Z]:|\\\\)/.test(query);
 
   async function go(path?: string): Promise<void> {
     setLoading(true);
@@ -229,7 +235,7 @@ export function FolderPicker({ onAdded, onCancel }: Props): React.JSX.Element {
                 <div className="flex min-w-0 items-center gap-0.5 overflow-hidden whitespace-nowrap [direction:rtl]">
                   {/* rtl keeps the tail of a long path visible; the inner span restores reading order. */}
                   <span className="flex items-center gap-0.5 [direction:ltr]">
-                    <Crumb label="/" onClick={() => void go('/')} />
+                    {!isWindowsPath(listing.path) && <Crumb label="/" onClick={() => void go('/')} />}
                     {crumbsOf(listing.path).map((c, i, all) => (
                       <span key={c.path} className="flex items-center gap-0.5">
                         {i > 0 && <span aria-hidden>/</span>}

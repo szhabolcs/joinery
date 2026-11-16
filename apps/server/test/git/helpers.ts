@@ -2,6 +2,7 @@
  * Shared fixture helpers for the git layer test suite. Not itself a test
  * file (no `.test.ts` suffix), so `bun test` never picks it up directly.
  */
+import { tmpdir } from 'node:os';
 import { mkdir, mkdtemp, rm, writeFile as fsWriteFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -27,7 +28,7 @@ export function runGit(cwd: string, args: string[]): RawGitResult {
 }
 
 function tempRoot(): string {
-  return Bun.env.TMPDIR ?? '/tmp';
+  return Bun.env.TMPDIR ?? tmpdir();
 }
 
 /** Creates a throwaway directory under `Bun.env.TMPDIR`. Caller is responsible for cleanup. */

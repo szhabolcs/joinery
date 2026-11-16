@@ -89,7 +89,8 @@ describe('read-only allowlist, exercised against a real repo', () => {
     );
   });
 
-  it('GIT_OPTIONAL_LOCKS=0 is always set, even when the caller tries to override it', async () => {
+  // The shim is a `#!/bin/sh` script on a `:`-separated PATH.
+  it.skipIf(process.platform === 'win32')('GIT_OPTIONAL_LOCKS=0 is always set, even when the caller tries to override it', async () => {
     // A shim `git` that just dumps its GIT_OPTIONAL_LOCKS to a file, so we
     // can observe what run.ts actually put in the child's environment
     // rather than trusting real git's behavior with the flag.

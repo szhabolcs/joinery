@@ -31,7 +31,17 @@ const ALLOW = (input: Record<string, unknown>): PermissionResult => ({ behavior:
  * case fall back to lexical resolution of `candidate` against the real
  * `cwd`, which still catches `../` escapes.
  */
+/**
+ * Windows path forms the fence below can't judge: UNC and device paths
+ * (`\\host\share`, where even `realpath` would reach out over the network)
+ * and drive-relative ones (`C:foo`, which aren't relative to `cwd`).
+ */
+function isUnsafeWindowsPath(path: string): boolean {
+  return process.platform === 'win32' && (/^[\\/]{2}/.test(path) || /^[a-zA-Z]:(?![\\/])/.test(path));
+}
+
 async function isUnderCwd(candidate: string, cwd: string): Promise<boolean> {
+  if (isUnsafeWindowsPath(candidate)) return false;
   const realCwd = await realpath(cwd);
   const absolute = isAbsolute(candidate) ? candidate : join(cwd, candidate);
   let real: string;
@@ -45,7 +55,7 @@ async function isUnderCwd(candidate: string, cwd: string): Promise<boolean> {
 
 /** An absolute pattern (`/…`, `~…`, `C:\\…`) or one with a `..` segment. */
 function escapesBase(pattern: string): boolean {
-  if (isAbsolute(pattern) || pattern.startsWith('~') || /^[a-zA-Z]:[\\/]/.test(pattern)) return true;
+  if (isAbsolute(pattern) || pattern.startsWith('~') || /^[a-zA-Z]:/.test(pattern)) return true;
   return pattern.split(/[\\/]/).includes('..');
 }
 

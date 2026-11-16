@@ -29,7 +29,7 @@
  * directly, not through this allowlist.
  */
 
-import { resolve } from 'node:path';
+import { resolve, sep } from 'node:path';
 
 export type GitResult = {
   stdout: Uint8Array;
@@ -165,8 +165,8 @@ function validateWorktreeAdd(args: readonly string[], dataDir: string | undefine
     throw new GitNotAllowedError(args, 'worktree add missing target path');
   }
   // Resolved, so `<dataDir>/../elsewhere` can't pass the prefix check.
-  const resolvedDataDir = `${resolve(dataDir)}/`;
-  const resolvedPath = `${resolve(path)}/`;
+  const resolvedDataDir = `${resolve(dataDir)}${sep}`;
+  const resolvedPath = `${resolve(path)}${sep}`;
   if (!resolvedPath.startsWith(resolvedDataDir)) {
     throw new GitNotAllowedError(args, `worktree add target must be under data dir ${dataDir}`);
   }
@@ -177,7 +177,7 @@ function validateCheckout(args: readonly string[], dataDir: string | undefined, 
   if (args.length !== 4 || args[1] !== '--detach' || args[2] !== '--force' || !/^[0-9a-f]{40,64}$/u.test(args[3] ?? '')) {
     throw new GitNotAllowedError(args, 'checkout is only allowed as `checkout --detach --force <sha>`');
   }
-  if (dataDir === undefined || cwd === undefined || !`${resolve(cwd)}/`.startsWith(`${resolve(dataDir)}/`)) {
+  if (dataDir === undefined || cwd === undefined || !`${resolve(cwd)}${sep}`.startsWith(`${resolve(dataDir)}${sep}`)) {
     throw new GitNotAllowedError(args, 'checkout is only allowed in a worktree under the data dir');
   }
 }
