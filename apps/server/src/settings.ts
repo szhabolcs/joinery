@@ -116,17 +116,26 @@ export function restartServer(): void {
   child.unref();
 }
 
-/** Total file bytes under `dir`, for Windows, which has no `du`. Links aren't followed. */
-async function walkedSize(dir: string): Promise<number> {
-  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
-  const sizes = await Promise.all(
-    entries.map((entry) => {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) return walkedSize(full);
-      return entry.isFile() ? fileSize(full) : 0;
-    }),
-  );
-  return sizes.reduce((total, size) => total + size, 0);
+/** Directories `walkedSize` reads at once, so a big tree can't run out of file handles. */
+const WALK_CONCURRENCY = 16;
+
+/** Total file bytes under `root`, for Windows, which has no `du`. Links aren't followed. */
+async function walkedSize(root: string): Promise<number> {
+  let total = 0;
+  const pending = [root];
+  while (pending.length > 0) {
+    await Promise.all(
+      pending.splice(0, WALK_CONCURRENCY).map(async (dir) => {
+        const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+        for (const entry of entries) {
+          const full = join(dir, entry.name);
+          if (entry.isDirectory()) pending.push(full);
+          else if (entry.isFile()) total += await fileSize(full);
+        }
+      }),
+    );
+  }
+  return total;
 }
 
 /** Total bytes on disk under `path`, via `du` (fast on a big tree); 0 when it's missing. */
