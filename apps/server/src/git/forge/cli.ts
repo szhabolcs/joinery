@@ -147,24 +147,34 @@ export async function localToken(cli: ForgeCli, host: string | null, cwd: string
   return result.exitCode === 0 && result.stdout.trim() !== '';
 }
 
-/** `<cli> auth status`, hostname-scoped when the origin host is known. Hits the network. */
-export async function probeAuth(cli: ForgeCli, host: string | null, cwd: string): Promise<boolean> {
+/** `gt`'s `auth status --verify` exit codes: a missing or rejected credential, and an instance that didn't answer. */
+const GT_EXIT_NOT_AUTHENTICATED = 4;
+const GT_EXIT_UNREACHABLE = 1;
+
+/** `<cli> auth status` (for `gt`, `--verify`), hostname-scoped when the origin host is known. Hits the network. */
+async function authStatus(cli: ForgeCli, host: string | null, cwd: string): Promise<SpawnResult> {
   if (cli === 'gt') {
     const hostArgs = host === null ? [] : ['--host', await giteaInstanceUrl(host, cwd)];
-    return (await spawnCli('gt', ['auth', 'status', '--verify', ...hostArgs], cwd, PROBE_TIMEOUT_MS))?.exitCode === 0;
+    return spawnCli('gt', ['auth', 'status', '--verify', ...hostArgs], cwd, PROBE_TIMEOUT_MS);
   }
   const args = host === null ? ['auth', 'status'] : ['auth', 'status', '--hostname', host];
-  return (await spawnCli(cli, args, cwd, PROBE_TIMEOUT_MS))?.exitCode === 0;
+  return spawnCli(cli, args, cwd, PROBE_TIMEOUT_MS);
 }
 
 /**
  * Why `cli` can't be asked about `host`, or `null` when it can. A passing
- * `auth status` settles it; a failing one is told apart locally: no CLI is
- * `missing-cli`, no stored login is `not-authenticated`, and a stored login
- * with a failing check means the host itself can't be reached.
+ * `auth status` settles it. `gt` says why it failed through its exit code
+ * (so an expired token reads as signed out, not unreachable); otherwise a
+ * failure is told apart locally: no CLI is `missing-cli`, no stored login is
+ * `not-authenticated`, and a stored login with a failing check means the
+ * host itself can't be reached.
  */
 export async function diagnose(cli: ForgeCli, host: string | null, cwd: string): Promise<CliUnavailableReason | null> {
-  if (await probeAuth(cli, host, cwd)) return null;
+  const status = await authStatus(cli, host, cwd);
+  if (status === null) return 'missing-cli';
+  if (status.exitCode === 0) return null;
+  if (cli === 'gt' && status.exitCode === GT_EXIT_NOT_AUTHENTICATED) return 'not-authenticated';
+  if (cli === 'gt' && status.exitCode === GT_EXIT_UNREACHABLE) return 'unreachable';
   const token = await localToken(cli, host, cwd);
   if (token === null) return 'missing-cli';
   return token ? 'unreachable' : 'not-authenticated';
