@@ -103,6 +103,9 @@ export const update: Command = {
       { name: 'version', type: 'string' },
     ]);
     if (wantsHelp(parsed)) return printLine(update.usage);
+    if (process.platform === 'win32') {
+      throw new Error('there are no Windows releases to update to; run `git pull` in your checkout instead');
+    }
 
     const layout = runtimeLayout();
     if (layout.mode !== 'installed') {

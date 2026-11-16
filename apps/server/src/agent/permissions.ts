@@ -22,6 +22,15 @@ const DENY = (message: string): PermissionResult => ({ behavior: 'deny', message
 const ALLOW = (input: Record<string, unknown>): PermissionResult => ({ behavior: 'allow', updatedInput: input });
 
 /**
+ * Windows path forms the fence below can't judge: UNC and device paths
+ * (`\\host\share`, where even `realpath` would reach out over the network)
+ * and drive-relative ones (`C:foo`, which aren't relative to `cwd`).
+ */
+function isUnsafeWindowsPath(path: string): boolean {
+  return process.platform === 'win32' && (/^[\\/]{2}/.test(path) || /^[a-zA-Z]:(?![\\/])/.test(path));
+}
+
+/**
  * Resolve `candidate` (as `Read`/`Grep`/`Glob` would see it — absolute or
  * relative to `cwd`) to a real path, and check it under `cwd`'s real path.
  * Both sides go through `realpath` so a symlink inside `cwd` can't point
@@ -31,15 +40,6 @@ const ALLOW = (input: Record<string, unknown>): PermissionResult => ({ behavior:
  * case fall back to lexical resolution of `candidate` against the real
  * `cwd`, which still catches `../` escapes.
  */
-/**
- * Windows path forms the fence below can't judge: UNC and device paths
- * (`\\host\share`, where even `realpath` would reach out over the network)
- * and drive-relative ones (`C:foo`, which aren't relative to `cwd`).
- */
-function isUnsafeWindowsPath(path: string): boolean {
-  return process.platform === 'win32' && (/^[\\/]{2}/.test(path) || /^[a-zA-Z]:(?![\\/])/.test(path));
-}
-
 async function isUnderCwd(candidate: string, cwd: string): Promise<boolean> {
   if (isUnsafeWindowsPath(candidate)) return false;
   const realCwd = await realpath(cwd);
