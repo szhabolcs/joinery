@@ -92,7 +92,7 @@ export type ReviewEngineParams = {
  *   .git/refs/review/<id>            root watch, collapsed onto the main clone
  *   .git/refs/review/<id>.lock       the transient lock git writes first
  *   .git/logs/refs/review/<id>       the reflog, when core.logAllRefUpdates is on
- *   refs, .git/refs                  Windows also reports the parent when the first pin creates `refs/review`
+ *   refs, .git/refs                  Windows only: the parent, when the first pin creates `refs/review`
  *
  * So this matches a `refs/review/` path *segment* anywhere. The theoretical
  * cost is swallowing a signal for a tracked source file that genuinely lives
@@ -102,7 +102,8 @@ export type ReviewEngineParams = {
 function isOwnRefWrite(filename: string | Buffer | null): boolean {
   if (filename === null) return false;
   const name = (typeof filename === 'string' ? filename : filename.toString('utf8')).replaceAll('\\', '/');
-  if (name === 'refs' || name === '.git/refs') return true; // a real change inside still reports its own path
+  // Windows only: a real change inside still reports its own path there.
+  if (process.platform === 'win32' && (name === 'refs' || name === '.git/refs')) return true;
   return name === 'refs/review' || name.startsWith('refs/review/') || name.includes('/refs/review/');
 }
 
