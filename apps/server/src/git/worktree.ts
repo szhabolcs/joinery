@@ -16,9 +16,9 @@
  * git subcommand that could touch a worktree we did not create.
  */
 import { rm } from 'node:fs/promises';
-import { join, normalize, resolve, sep } from 'node:path';
+import { join, normalize } from 'node:path';
 import { canonicalizePath } from './paths.ts';
-import { git, gitOrThrow, type GitCallOptions } from './run.ts';
+import { git, gitOrThrow, isUnderDir, type GitCallOptions } from './run.ts';
 
 export type WorktreeEntry = {
   /** Realpath of the worktree's working directory. */
@@ -201,9 +201,7 @@ export type ScopedRemoveParams = {
  * function itself cannot be used to remove anything but our own cache.
  */
 export async function scopedRemoveWorktree(params: ScopedRemoveParams): Promise<void> {
-  const normalizedDataDir = `${resolve(params.dataDir)}${sep}`;
-  const normalizedWorktreePath = `${resolve(params.worktreePath)}${sep}`;
-  if (!normalizedWorktreePath.startsWith(normalizedDataDir)) {
+  if (!isUnderDir(params.worktreePath, params.dataDir)) {
     throw new Error(
       `refusing to remove worktree outside data dir: ${params.worktreePath} (data dir: ${params.dataDir})`,
     );

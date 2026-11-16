@@ -148,6 +148,16 @@ export function assertAllowed(args: readonly string[], dataDir: string | undefin
   throw new GitNotAllowedError(args, `subcommand "${sub}" is not on the read or write allowlist`);
 }
 
+/**
+ * True when `path` is `dir` or under it, after resolving both, so
+ * `<dir>/../elsewhere` can't pass. Case-insensitive on Windows, whose paths
+ * are, and where git may report `c:\` for a `C:\` data dir.
+ */
+export function isUnderDir(path: string, dir: string): boolean {
+  const fold = (p: string): string => (process.platform === 'win32' ? p.toLowerCase() : p);
+  return fold(`${resolve(path)}${sep}`).startsWith(fold(`${resolve(dir)}${sep}`));
+}
+
 function validateWorktreeAdd(args: readonly string[], dataDir: string | undefined): void {
   if (dataDir === undefined) {
     throw new GitNotAllowedError(args, 'worktree add requires dataDir to be set for scoping');
@@ -164,10 +174,7 @@ function validateWorktreeAdd(args: readonly string[], dataDir: string | undefine
   if (path === undefined || path.startsWith('-')) {
     throw new GitNotAllowedError(args, 'worktree add missing target path');
   }
-  // Resolved, so `<dataDir>/../elsewhere` can't pass the prefix check.
-  const resolvedDataDir = `${resolve(dataDir)}${sep}`;
-  const resolvedPath = `${resolve(path)}${sep}`;
-  if (!resolvedPath.startsWith(resolvedDataDir)) {
+  if (!isUnderDir(path, dataDir)) {
     throw new GitNotAllowedError(args, `worktree add target must be under data dir ${dataDir}`);
   }
 }
@@ -177,7 +184,7 @@ function validateCheckout(args: readonly string[], dataDir: string | undefined, 
   if (args.length !== 4 || args[1] !== '--detach' || args[2] !== '--force' || !/^[0-9a-f]{40,64}$/u.test(args[3] ?? '')) {
     throw new GitNotAllowedError(args, 'checkout is only allowed as `checkout --detach --force <sha>`');
   }
-  if (dataDir === undefined || cwd === undefined || !`${resolve(cwd)}${sep}`.startsWith(`${resolve(dataDir)}${sep}`)) {
+  if (dataDir === undefined || cwd === undefined || !isUnderDir(cwd, dataDir)) {
     throw new GitNotAllowedError(args, 'checkout is only allowed in a worktree under the data dir');
   }
 }
