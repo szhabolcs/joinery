@@ -28,6 +28,8 @@ export const repoSchema = z.object({
   forge: forgeKindSchema.nullable(),
   remoteOwner: z.string().nullable(),
   remoteName: z.string().nullable(),
+  /** Gitea only: the instance's web URL (`https://host[:port][/base]`) from `gt`'s login. Absent means `https://<remoteHost>`. */
+  instanceUrl: z.string().optional(),
   defaultBranch: z.string(),
   createdAt: z.number().int(),
 });

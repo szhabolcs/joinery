@@ -5,6 +5,7 @@ import { repo } from '@joinery/core/db';
 import type { ForgeKind, Repo } from '@joinery/core';
 import { repoId } from '@joinery/core';
 import { eq } from 'drizzle-orm';
+import { giteaInstanceUrl } from '../git/forge/cli.ts';
 import { detectForge } from '../git/forge/detect.ts';
 import type { Db } from './client.ts';
 
@@ -101,21 +102,28 @@ async function withForge(db: Db, row: Repo): Promise<Repo> {
   return task;
 }
 
+/** `withForge`, plus a Gitea repo's instance URL (cached per host in `git/forge/cli.ts`), so PR links keep its port and base path. */
+async function withRemote(db: Db, row: Repo): Promise<Repo> {
+  const r = await withForge(db, row);
+  if (r.forge !== 'gitea' || r.remoteHost === null) return r;
+  return { ...r, instanceUrl: await giteaInstanceUrl(r.remoteHost, r.rootPath) };
+}
+
 export async function listRepos(db: Db): Promise<Repo[]> {
   const rows = await db.select().from(repo);
-  return Promise.all(rows.map((row) => withForge(db, toRepo(row))));
+  return Promise.all(rows.map((row) => withRemote(db, toRepo(row))));
 }
 
 export async function getRepoById(db: Db, id: string): Promise<Repo | null> {
   const rows = await db.select().from(repo).where(eq(repo.id, id)).limit(1);
   const row = rows[0];
-  return row === undefined ? null : withForge(db, toRepo(row));
+  return row === undefined ? null : withRemote(db, toRepo(row));
 }
 
 export async function getRepoByPath(db: Db, rootPath: string): Promise<Repo | null> {
   const rows = await db.select().from(repo).where(eq(repo.rootPath, rootPath)).limit(1);
   const row = rows[0];
-  return row === undefined ? null : withForge(db, toRepo(row));
+  return row === undefined ? null : withRemote(db, toRepo(row));
 }
 
 /** The remote's default branch moved (renamed `master` → `main`, ...): branch-only reviews diff against the new one. */
