@@ -14,7 +14,7 @@ import { spawn } from 'node:child_process';
 import { open, readdir, realpath, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { DataUsage, ForgeKind, FullDiskAccess, Integrations } from '@joinery/core';
+import { FORGE_CLI, type DataUsage, type ForgeKind, type FullDiskAccess, type Integrations } from '@joinery/core';
 import { removeAgentWorktree, removeOwnWorktree } from './agent/maintenance.ts';
 import { findClaudeExecutable } from './agent/claudeExecutable.ts';
 import { deleteAllSessions, listSessionFiles, sessionsDir } from './agent/sessions.ts';
@@ -28,8 +28,6 @@ import { runsAsService, runtimeLayout, serviceRestartCommand } from './runtime.t
 import { clearAllStoredCaches } from './storedCache.ts';
 
 const FULL_DISK_ACCESS_PANE = 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles';
-
-const FORGE_CLI = { github: 'gh', gitlab: 'glab', gitea: 'gt' } as const;
 
 export async function getIntegrations(db: Db): Promise<Integrations> {
   const repos = await listRepos(db);

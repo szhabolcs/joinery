@@ -1,7 +1,4 @@
-import type { ForgeKind, ForgeUnavailableReason } from '@joinery/core';
-
-/** The host CLI each forge is asked through. */
-export const FORGE_CLI = { github: 'gh', gitlab: 'glab', gitea: 'gt' } as const;
+import { FORGE_CLI, type ForgeKind, type ForgeUnavailableReason } from '@joinery/core';
 
 /** Why a repo's forge couldn't be asked, with the host and (when known) the forge it refers to. */
 export type ForgeNotice = { reason: ForgeUnavailableReason; host: string | null; forge: ForgeKind | null };

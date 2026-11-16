@@ -4,6 +4,9 @@ import { revisionSchema } from './files.ts';
 export const forgeKindSchema = z.enum(['github', 'gitlab', 'gitea', 'none']);
 export type ForgeKind = z.infer<typeof forgeKindSchema>;
 
+/** The host CLI each forge is asked through. */
+export const FORGE_CLI = { github: 'gh', gitlab: 'glab', gitea: 'gt' } as const satisfies Record<Exclude<ForgeKind, 'none'>, string>;
+
 /**
  * Why a forge couldn't be asked: its CLI isn't installed, has no local login
  * for the host, is logged in but the host can't be reached (VPN, DNS,

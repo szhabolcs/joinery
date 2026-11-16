@@ -14,7 +14,7 @@
  */
 import { Dialog } from '@base-ui-components/react/dialog';
 import { Tabs } from '@base-ui-components/react/tabs';
-import type { FullDiskAccess, Integrations } from '@joinery/core';
+import { FORGE_CLI, type FullDiskAccess, type Integrations } from '@joinery/core';
 import {
   ArrowLeft,
   ArrowRight,
@@ -42,7 +42,6 @@ import { FolderPicker } from '../home/FolderPicker.tsx';
 import { Chip, type Tone } from '../home/primitives.tsx';
 import { LSP_TITLE, useLanguageServerPicker } from '../settings/LanguageServerPicker.tsx';
 import { REASON, hostHint, installHint } from '../settings/Settings.tsx';
-import { FORGE_CLI } from '../../lib/forgeNotice.ts';
 import { ThemePicker } from '../settings/ThemePicker.tsx';
 import { Hint, SEGMENT_CLASS, Segment, Segmented } from '../controls.tsx';
 import { MockReview } from './MockReview.tsx';
