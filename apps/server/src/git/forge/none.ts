@@ -4,7 +4,7 @@ import type { Forge } from './types.ts';
 export const noForge: Forge = {
   kind: 'none',
   cli: 'forge CLI',
-  setupHint: "This repo's origin is not on a supported host (GitHub or GitLab).",
+  setupHint: "This repo's origin is not on a supported host (GitHub, GitLab or Gitea).",
   pullHeadRef: () => null,
   currentLogin: async () => null,
   findOpenPrNumberForBranch: async () => null,

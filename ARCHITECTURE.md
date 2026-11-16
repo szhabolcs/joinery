@@ -80,7 +80,7 @@ packages/core  zod schemas shared by all three
   - `topic.changed` carries only a version; the client refetches through the normal API.
   - A review topic also streams file lists (tagged by revision), `root.rebound`, `thread.*` and `run.*`.
   - The browser never polls. Reconnecting just asks for the list again.
-- **Forges:** everything host-specific sits behind one `Forge` seam (`git/forge/`, picked by `forgeFor(repo)`). Nothing outside that module calls `gh`/`glab` or hard-codes `refs/pull/`.
+- **Forges:** everything host-specific sits behind one `Forge` seam (`git/forge/`, picked by `forgeFor(repo)`). Nothing outside that module calls `gh`/`glab`/`gt` or hard-codes `refs/pull/`. Gitea calls pass the instance (`--host`) and the `owner/name` path explicitly, from the origin, rather than relying on `gt`'s repo discovery.
 
 ## Threads, viewed state, reading order
 

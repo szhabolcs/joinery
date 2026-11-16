@@ -58,7 +58,7 @@ import { CommandPalette } from '../CommandPalette.tsx';
 import { ConfirmDelete } from '../ConfirmDelete.tsx';
 import { ChromeSwitch, Hint } from '../controls.tsx';
 import { repoLabel } from '../Explore.tsx';
-import { GitHubMark, GitLabMark, GitMark, LANGUAGE_MARK } from '../brandMarks.tsx';
+import { GiteaMark, GitHubMark, GitLabMark, GitMark, LANGUAGE_MARK } from '../brandMarks.tsx';
 import { FolderPicker } from '../home/FolderPicker.tsx';
 import { Panel } from '../home/Panel.tsx';
 import { Chip, type Tone } from '../home/primitives.tsx';
@@ -267,7 +267,7 @@ function ThemeColumn({
 
 // --- Repositories ---
 
-const FORGE_LABEL: Record<NonNullable<Repo['forge']>, string> = { github: 'GitHub', gitlab: 'GitLab', none: 'No forge' };
+const FORGE_LABEL: Record<NonNullable<Repo['forge']>, string> = { github: 'GitHub', gitlab: 'GitLab', gitea: 'Gitea', none: 'No forge' };
 
 function ReposPanel(): React.JSX.Element {
   const { repos, loading, refresh } = useHomeData();
@@ -346,9 +346,16 @@ export const REASON: Record<NonNullable<Integrations['hosts'][number]['reason']>
   unreachable: { label: "Can't reach host", tone: 'warning' },
 };
 
-export function hostHint(cli: 'gh' | 'glab', host: string, reason: Integrations['hosts'][number]['reason']): string | undefined {
-  if (reason === 'missing-cli') return cli === 'gh' ? 'brew install gh' : 'brew install glab';
-  if (reason === 'not-authenticated') return `${cli} auth login --hostname ${host}`;
+type ForgeCli = Integrations['clis'][number]['cli'];
+
+/** How to install a forge CLI; `gt` comes from its releases page. */
+export function installHint(cli: ForgeCli): string {
+  return cli === 'gt' ? 'Install gt from gitea.com/gitea/cli' : `brew install ${cli}`;
+}
+
+export function hostHint(cli: ForgeCli, host: string, reason: Integrations['hosts'][number]['reason']): string | undefined {
+  if (reason === 'missing-cli') return installHint(cli);
+  if (reason === 'not-authenticated') return cli === 'gt' ? `gt auth login --host ${host}` : `${cli} auth login --hostname ${host}`;
   if (reason === 'unreachable') return 'Signed in, but the host did not answer. A VPN?';
   return undefined;
 }
@@ -451,7 +458,9 @@ function IntegrationGroup({
   );
 }
 
-const CLI_MARK: Record<Integrations['clis'][number]['cli'], React.ReactNode> = { gh: <GitHubMark />, glab: <GitLabMark /> };
+const CLI_FORGE: Record<ForgeCli, string> = { gh: 'GitHub', glab: 'GitLab', gt: 'Gitea' };
+
+const CLI_MARK: Record<Integrations['clis'][number]['cli'], React.ReactNode> = { gh: <GitHubMark />, glab: <GitLabMark />, gt: <GiteaMark /> };
 
 function IntegrationsPanel(): React.JSX.Element {
   const { data, error, loading, reload } = useLoad(() => callApi('integrations'));
@@ -492,9 +501,9 @@ function IntegrationsPanel(): React.JSX.Element {
               {data.claude.path !== null || data.claude.bundled ? <Chip tone="success" icon={<Check size={11} strokeWidth={2.5} />}>Found</Chip> : <Chip tone="danger">Not found</Chip>}
             </Row>
           </IntegrationGroup>
-          <IntegrationGroup title="Forges" about="Pull requests and merge requests come in through gh and glab, signed in to each host your repositories use.">
+          <IntegrationGroup title="Forges" about="Pull requests and merge requests come in through gh, glab and gt, signed in to each host your repositories use.">
             {data.clis.map((c) => (
-              <Row key={c.cli} icon={CLI_MARK[c.cli]} title={<code>{c.cli}</code>} detail={c.path ?? (c.cli === 'gh' ? 'Needed for GitHub' : 'Needed for GitLab')}>
+              <Row key={c.cli} icon={CLI_MARK[c.cli]} title={<code>{c.cli}</code>} detail={c.path ?? `Needed for ${CLI_FORGE[c.cli]}`}>
                 {c.path !== null ? <Chip tone="success" icon={<Check size={11} strokeWidth={2.5} />}>Installed</Chip> : <Chip>Not installed</Chip>}
               </Row>
             ))}

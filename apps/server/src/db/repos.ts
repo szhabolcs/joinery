@@ -77,7 +77,7 @@ const NONE_RECHECK_MS = 60 * 60_000;
  *
  * - A legacy row (null) is detected once and persisted.
  * - A `'none'` row is re-detected at most once an hour per repo per process, so
- *   logging into `glab`/`gh` after registering a custom-domain host is picked up
+ *   logging into `glab`/`gt`/`gh` after registering a custom-domain host is picked up
  *   without re-adding the repo. Hosts with a name shortcut in `detectForge` are
  *   never `'none'`, so only truly unknown hosts spawn (cheap, short-timeout)
  *   auth probes. The result is persisted only when it changed.

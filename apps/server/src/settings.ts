@@ -2,7 +2,7 @@
  * What the settings page reads and does, apart from repo and review
  * deletion (`cleanup.ts`):
  *
- * - integrations: is `claude` there, are `gh`/`glab` on PATH, can each
+ * - integrations: is `claude` there, are `gh`/`glab`/`gt` on PATH, can each
  *   forge host the registered repos point at actually be asked, and which
  *   language server would answer hover/peek per language;
  * - Full Disk Access for the installed binary on macOS, opening the pane
@@ -14,7 +14,7 @@ import { spawn } from 'node:child_process';
 import { open, readdir, realpath, rm, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { DataUsage, FullDiskAccess, Integrations } from '@joinery/core';
+import type { DataUsage, ForgeKind, FullDiskAccess, Integrations } from '@joinery/core';
 import { removeAgentWorktree, removeOwnWorktree } from './agent/maintenance.ts';
 import { findClaudeExecutable } from './agent/claudeExecutable.ts';
 import { deleteAllSessions, listSessionFiles, sessionsDir } from './agent/sessions.ts';
@@ -29,26 +29,28 @@ import { clearAllStoredCaches } from './storedCache.ts';
 
 const FULL_DISK_ACCESS_PANE = 'x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles';
 
+const FORGE_CLI = { github: 'gh', gitlab: 'glab', gitea: 'gt' } as const;
+
 export async function getIntegrations(db: Db): Promise<Integrations> {
   const repos = await listRepos(db);
   // One row per forge host, probed from the first repo that points at it.
-  const byHost = new Map<string, { forge: 'github' | 'gitlab'; cwd: string; repos: number }>();
+  const byHost = new Map<string, { forge: Exclude<ForgeKind, 'none'>; cwd: string; repos: number }>();
   for (const r of repos) {
-    if (r.remoteHost === null || (r.forge !== 'github' && r.forge !== 'gitlab')) continue;
+    if (r.remoteHost === null || r.forge === null || r.forge === 'none') continue;
     const entry = byHost.get(r.remoteHost);
     if (entry === undefined) byHost.set(r.remoteHost, { forge: r.forge, cwd: r.rootPath, repos: 1 });
     else entry.repos += 1;
   }
   const hosts = await Promise.all(
     Array.from(byHost, async ([host, { forge, cwd, repos: count }]) => {
-      const cli = forge === 'github' ? ('gh' as const) : ('glab' as const);
+      const cli = FORGE_CLI[forge];
       return { host, forge, cli, repos: count, reason: await diagnose(cli, host, cwd) };
     }),
   );
   return {
     git: { path: Bun.which('git') },
     claude: { path: findClaudeExecutable(), bundled: runtimeLayout().mode !== 'installed' },
-    clis: (['gh', 'glab'] as const).map((cli) => ({ cli, path: Bun.which(cli) })),
+    clis: (['gh', 'glab', 'gt'] as const).map((cli) => ({ cli, path: Bun.which(cli) })),
     hosts: hosts.sort((a, b) => a.host.localeCompare(b.host)),
     lsp: await installedServers(),
   };

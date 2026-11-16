@@ -48,13 +48,19 @@ export type RemoteIdentity = {
 export function parseRemoteIdentity(url: string): RemoteIdentity {
   const trimmed = url.trim().replace(/\.git$/u, '');
 
+  // ssh://git@host/owner/name, with an optional port (self-hosted Gitea often uses one)
+  const sshUrlMatch = /^ssh:\/\/git@[^:/]+(?::\d+)?\/(.+)\/([^/]+)$/u.exec(trimmed);
+  if (sshUrlMatch !== null) {
+    return { owner: sshUrlMatch[1] ?? null, name: sshUrlMatch[2] ?? null };
+  }
+
   // git@github.com:owner/name  or  ssh://git@github.com/owner/name
   const sshMatch = /^(?:ssh:\/\/)?git@[^:/]+[:/](.+)\/([^/]+)$/u.exec(trimmed);
   if (sshMatch !== null) {
     return { owner: sshMatch[1] ?? null, name: sshMatch[2] ?? null };
   }
 
-  // https://github.com/owner/name
+  // https://github.com/owner/name, with an optional port
   const httpsMatch = /^https?:\/\/[^/]+\/(.+)\/([^/]+)$/u.exec(trimmed);
   if (httpsMatch !== null) {
     return { owner: httpsMatch[1] ?? null, name: httpsMatch[2] ?? null };

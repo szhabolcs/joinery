@@ -54,7 +54,7 @@ const FETCH_TIMEOUT_MS = 60_000;
 
 /** `git fetch` and `ls-remote`: network-bound, a few at a time across every repo. */
 const network = new PQueue({ concurrency: 3 });
-/** `gh`/`glab`: a few at a time, and no more than 10 a second across every repo. */
+/** `gh`/`glab`/`gt`: a few at a time, and no more than 10 a second across every repo. */
 const forgeCalls = new PQueue({ concurrency: 3, interval: 1_000, intervalCap: 10 });
 /** Local git work per review (rev-parse, merge-base, diff): bounded so a big repo can't starve the rest. */
 const local = new PQueue({ concurrency: 4 });
