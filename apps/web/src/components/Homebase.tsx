@@ -19,7 +19,7 @@
  */
 import { Menu } from '@base-ui-components/react/menu';
 import { firstForgeNotice, forgeNoticeLine } from '../lib/forgeNotice.ts';
-import { AGENT_MODELS, type AgentModel, type Pull, type Repo, type Review, type ReviewSummary } from '@joinery/core';
+import { type AgentModel, type Pull, type Repo, type Review, type ReviewSummary } from '@joinery/core';
 import {
   Archive,
   Check,
@@ -28,12 +28,14 @@ import {
   Loader2,
   ChevronDown,
   ChevronRight,
+  GripVertical,
+  Layers,
   RefreshCw,
   Settings as SettingsIcon,
   Waypoints,
 } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { useGenerationModel } from '../lib/agentModel.ts';
+import { useAgentModels, useGenerationModel } from '../lib/agentModel.ts';
 import { effortOf } from '../lib/effort.ts';
 import { useGlobalKeymap } from '../lib/keymap.ts';
 import { maybeStartOnboarding } from '../lib/onboarding.ts';
@@ -43,6 +45,8 @@ import { personFrom } from '../lib/people.ts';
 import { pullUrl } from '../lib/pullUrl.ts';
 import { relativeTime } from '../lib/relativeTime.ts';
 import { useStoredState } from '../lib/storedState.ts';
+import { applyCustomOrder, groupByStack, indexStacks, stackSlotOf, type StackSlot } from '../lib/stacks.ts';
+import { useReorder, type ReorderRowProps } from '../lib/useReorder.ts';
 import { goReview, goSettings } from '../lib/router.ts';
 import { useHomeData, type HomeReview } from '../state/HomeData.tsx';
 import { useTheme } from '../state/ThemeContext.tsx';
@@ -58,7 +62,7 @@ import { UpdateButton, useVersion, VersionText } from './home/VersionBadge.tsx';
 import { FolderPicker } from './home/FolderPicker.tsx';
 import { pathSegments } from '../lib/paths.ts';
 
-type Order = 'effort' | 'recent';
+type Order = 'effort' | 'recent' | 'custom';
 
 function greeting(): string {
   const hour = new Date().getHours();
@@ -121,6 +125,7 @@ export function Homebase(): React.JSX.Element {
     pullsByRepo,
     pullsAvailable,
     pullsNotice,
+    stacksByRepo,
     me,
     loading,
     refreshing,
@@ -145,7 +150,9 @@ export function Homebase(): React.JSX.Element {
     if (loaded) maybeStartOnboarding(repos.length);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on the first load
   }, [loaded]);
-  const [order, setOrder] = useState<Order>('effort');
+  const [order, setOrder] = useStoredState<Order>(ORDER_KEY, 'effort');
+  // The reader's own order for "Custom": unit keys (a review, or a whole stack), top first.
+  const [customOrder, setCustomOrder] = useStoredState<readonly string[]>(CUSTOM_ORDER_KEY, []);
   const [onlyRequested, setOnlyRequested] = useStoredState(ONLY_REQUESTED_KEY, false);
   const [queueSort, setQueueSort] = useStoredState<QueueSort>(QUEUE_SORT_KEY, 'effort');
   const [hiddenRepoIds, setHiddenRepoIds] = useStoredState<readonly string[]>(QUEUE_HIDDEN_REPOS_KEY, []);
@@ -227,11 +234,25 @@ export function Homebase(): React.JSX.Element {
   const reviewing = useMemo(() => reviews.filter((r) => r.bucket === 'attention'), [reviews]);
   const done = useMemo(() => reviews.filter((r) => r.bucket === 'done').sort((a, b) => reviewLastActivityAt(b) - reviewLastActivityAt(a)), [reviews]);
 
+  const stackIndex = useMemo(() => indexStacks(stacksByRepo), [stacksByRepo]);
+  const reviewSlot = (hr: HomeReview): StackSlot | null => stackSlotOf(stackIndex, hr.repo.id, hr.review.prNumber);
+
   const list = useMemo(() => {
     return [...reviewing].sort((a, b) =>
-      order === 'effort' ? effortOf(a.summary).score - effortOf(b.summary).score : reviewLastActivityAt(b) - reviewLastActivityAt(a),
+      // Custom starts from lightest first: that's where anything not yet placed lands.
+      order === 'recent' ? reviewLastActivityAt(b) - reviewLastActivityAt(a) : effortOf(a.summary).score - effortOf(b.summary).score,
     );
   }, [order, reviewing]);
+  // A stack's reviews sit together, as one row of the list (and one thing to drag).
+  const units = useMemo(() => {
+    const grouped = groupByStack(list, (hr) => stackSlotOf(stackIndex, hr.repo.id, hr.review.prNumber), (hr) => `review:${hr.review.id}`);
+    return order === 'custom' ? applyCustomOrder(grouped, customOrder) : grouped;
+  }, [list, stackIndex, order, customOrder]);
+  const reorder = useReorder(
+    units.map((u) => u.key),
+    setCustomOrder,
+    order === 'custom',
+  );
 
   // The queue: every open PR across every repo that has no review yet
   // (or only an unstarted draft one). Archived reviews stay out for good.
@@ -267,6 +288,8 @@ export function Homebase(): React.JSX.Element {
   const hiddenRepos = new Set(hiddenRepoIds);
   const queueFiltered = onlyRequested || queueRepos.some((r) => hiddenRepos.has(r.id));
   const shownQueue = queue.filter((q) => (!onlyRequested || q.pull.reviewRequested) && !hiddenRepos.has(q.repoId));
+  const queueSlot = (q: { repoId: string; pull: Pull }): StackSlot | null => stackSlotOf(stackIndex, q.repoId, q.pull.number);
+  const queueUnits = groupByStack(shownQueue, queueSlot, (q) => `${q.repoId}:${String(q.pull.number)}`);
 
   const handleOpenPull = (repoId: string, pull: Pull) => {
     const key = `${repoId}:${String(pull.number)}`;
@@ -408,6 +431,7 @@ export function Homebase(): React.JSX.Element {
                         <Segmented value={order} onChange={setOrder} aria-label="Order">
                           <Segment value="effort">Lightest first</Segment>
                           <Segment value="recent">Recent</Segment>
+                          <Segment value="custom">Custom</Segment>
                         </Segmented>
                       ) : undefined
                     }
@@ -419,14 +443,36 @@ export function Homebase(): React.JSX.Element {
                       </p>
                     ) : (
                       <ul className="divide-y divide-chrome-border">
-                        {list.map((r) => (
-                          <ReviewCard
-                            key={r.review.id}
-                            review={r}
-                            onGenerateReadingOrder={generateReadingOrder}
-                            onArchive={archiveReview}
-                          />
-                        ))}
+                        {units.map((unit) => {
+                          const handle =
+                            order === 'custom'
+                              ? { props: reorder.rowProps(unit.key), onMove: (delta: number) => reorder.move(unit.key, delta) }
+                              : undefined;
+                          const cards = unit.items.map((r) => (
+                            <ReviewCard
+                              key={r.review.id}
+                              review={r}
+                              stackSlot={reviewSlot(r)}
+                              reorder={unit.stack === null ? handle : undefined}
+                              onGenerateReadingOrder={generateReadingOrder}
+                              onArchive={archiveReview}
+                            />
+                          ));
+                          return unit.stack === null ? (
+                            cards
+                          ) : (
+                            <StackGroup
+                              key={unit.key}
+                              slot={unit.stack}
+                              shown={unit.items.length}
+                              repoName={queueRepoName(unit.stack.repoId)}
+                              reorder={handle}
+                              rail="ml-4"
+                            >
+                              {cards}
+                            </StackGroup>
+                          );
+                        })}
                       </ul>
                     )}
                     {done.length > 0 && (
@@ -499,17 +545,34 @@ export function Homebase(): React.JSX.Element {
                       </div>
                     ) : (
                       <ul className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pt-1 pb-2">
-                        {shownQueue.map(({ repoId, pull }) => {
-                          const key = `${repoId}:${String(pull.number)}`;
-                          return (
-                            <QueueRow
-                              key={key}
-                              repoName={queueRepoName(repoId)}
-                              repoId={repoId}
-                              pull={pull}
-                              opening={openingKeys.has(key)}
-                              onOpen={handleOpenPull}
-                            />
+                        {queueUnits.map((unit) => {
+                          const rows = unit.items.map((item) => {
+                            const key = `${item.repoId}:${String(item.pull.number)}`;
+                            return (
+                              <QueueRow
+                                key={key}
+                                repoName={queueRepoName(item.repoId)}
+                                repoId={item.repoId}
+                                pull={item.pull}
+                                stackSlot={queueSlot(item)}
+                                opening={openingKeys.has(key)}
+                                onOpen={handleOpenPull}
+                              />
+                            );
+                          });
+                          return unit.stack === null ? (
+                            rows
+                          ) : (
+                            <StackGroup
+                              key={unit.key}
+                              slot={unit.stack}
+                              shown={unit.items.length}
+                              repoName={queueRepoName(unit.stack.repoId)}
+                              rail="ml-3 pl-1"
+                              itemGap
+                            >
+                              {rows}
+                            </StackGroup>
                           );
                         })}
                       </ul>
@@ -567,16 +630,106 @@ const TOPBAR_FADE = `linear-gradient(to bottom, ${[
   .map(([a, at]) => `color-mix(in srgb, var(--chrome-bg-sunken) ${String((a ?? 0) * 100)}%, transparent) ${String(at)}%`)
   .join(', ')})`;
 
+const ORDER_KEY = 'joinery.reviewing.order';
+const CUSTOM_ORDER_KEY = 'joinery.reviewing.custom-order';
 const ONLY_REQUESTED_KEY = 'joinery.queue.only-requested';
 const QUEUE_SORT_KEY = 'joinery.queue.sort';
 const QUEUE_HIDDEN_REPOS_KEY = 'joinery.queue.hidden-repos';
 
+/** A row's drag props and keyboard move, in the "Custom" order. */
+interface RowReorder {
+  props: ReorderRowProps;
+  onMove: (delta: number) => void;
+}
+
+/** The drop line a dragged row draws on its target, and the dragged row's own fade. */
+const DROP_CLASS =
+  'data-[drop=before]:shadow-[inset_0_2px_0_var(--chrome-accent)] data-[drop=after]:shadow-[inset_0_-2px_0_var(--chrome-accent)] data-dragging:opacity-50';
+
+/** The drag handle at a row's left edge; ↑/↓ on it moves the row without a mouse. */
+function ReorderGrip({ label, onMove }: { label: string; onMove: (delta: number) => void }): React.JSX.Element {
+  return (
+    <Hint label="Drag to reorder, or use ↑ and ↓">
+      <button
+        type="button"
+        aria-label={`Move ${label}`}
+        onKeyDown={(e) => {
+          if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+          e.preventDefault();
+          onMove(e.key === 'ArrowUp' ? -1 : 1);
+        }}
+        className="pointer-events-auto absolute top-1/2 left-0.5 flex h-6 w-3 -translate-y-1/2 cursor-grab items-center justify-center rounded text-chrome-fg-subtle opacity-0 transition-opacity group-hover:opacity-100 hover:text-chrome-fg focus-visible:opacity-100 active:cursor-grabbing"
+      >
+        <GripVertical size={12} strokeWidth={1.75} aria-hidden />
+      </button>
+    </Hint>
+  );
+}
+
+/** Where a PR sits in its stack, after its number: "2/3". */
+function StackPosition({ slot }: { slot: StackSlot }): React.JSX.Element {
+  return (
+    <Hint label={`${String(slot.position)} of ${String(slot.size)} in a stack on ${slot.stack.baseRefName}`}>
+      <span className="pointer-events-auto flex shrink-0 items-center gap-0.5 text-micro tabular-nums text-chrome-fg-subtle">
+        <Layers size={11} strokeWidth={2} aria-hidden />
+        {slot.position}/{slot.size}
+      </span>
+    </Hint>
+  );
+}
+
+/**
+ * Two or more PRs of one stack, together under a one-line header, bottom
+ * of the stack first. In the "Custom" order the whole group drags as one.
+ */
+function StackGroup({
+  slot,
+  shown,
+  repoName,
+  reorder,
+  rail,
+  itemGap = false,
+  children,
+}: {
+  slot: StackSlot;
+  /** How many of the stack's PRs are in this list. */
+  shown: number;
+  repoName: string;
+  reorder?: RowReorder | undefined;
+  /** The indent of the members' rail. */
+  rail: string;
+  /** Space the members apart (the queue's rows are separate tiles). */
+  itemGap?: boolean;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const label = `stack of ${String(slot.size)} on ${slot.stack.baseRefName}`;
+  return (
+    <li {...reorder?.props} className={`group/stack relative ${DROP_CLASS}`} aria-label={`Stacked pull requests, ${label}`}>
+      <div className="group relative flex h-7 items-center gap-1.5 pr-4 pl-4 text-micro text-chrome-fg-subtle">
+        {reorder !== undefined && <ReorderGrip label={label} onMove={reorder.onMove} />}
+        <Layers size={12} strokeWidth={1.75} aria-hidden />
+        <span className="font-medium text-chrome-fg-muted">Stack</span>
+        <span className="tabular-nums">{shown === slot.size ? `${String(slot.size)} pull requests` : `${String(shown)} of ${String(slot.size)} pull requests`}</span>
+        <span className="truncate">
+          {repoName} · on {slot.stack.baseRefName}
+        </span>
+      </div>
+      <ul className={`${rail} border-l border-chrome-border ${itemGap ? 'flex flex-col gap-1' : 'divide-y divide-chrome-border'}`}>{children}</ul>
+    </li>
+  );
+}
+
 function ReviewCard({
   review: hr,
+  stackSlot,
+  reorder,
   onGenerateReadingOrder,
   onArchive,
 }: {
   review: HomeReview;
+  stackSlot: StackSlot | null;
+  /** Set in the "Custom" order when this card is a row of its own. */
+  reorder?: RowReorder | undefined;
   onGenerateReadingOrder: (id: string, model: AgentModel) => Promise<void>;
   onArchive: (id: string) => Promise<void>;
 }): React.JSX.Element {
@@ -589,8 +742,9 @@ function ReviewCard({
     // The whole card opens the review via an underlay button, so the real
     // controls inside it (the PR link, the options menu) aren't nested in a
     // button. Content ignores the pointer except those controls.
-    <li className="group relative transition-colors hover:bg-chrome-bg-hover">
+    <li {...reorder?.props} className={`group relative transition-colors hover:bg-chrome-bg-hover ${DROP_CLASS}`}>
       <button type="button" onClick={() => goReview(review.id)} aria-label={`Open ${title}`} className="absolute inset-0" />
+      {reorder !== undefined && <ReorderGrip label={title} onMove={reorder.onMove} />}
       <div className="pointer-events-none relative flex items-stretch gap-4 px-4 py-3">
         <Avatar person={author} size={32} />
 
@@ -617,6 +771,7 @@ function ReviewCard({
                   {review.prNumber}
                 </span>
               ))}
+            {stackSlot !== null && <StackPosition slot={stackSlot} />}
             <CiIcon ci={summary.ci} size={12} />
             {summary.draft && <Chip>draft</Chip>}
             {review.status === 'orphaned' && <Chip>branch gone</Chip>}
@@ -679,6 +834,7 @@ function ReviewOptions({
   onArchive: () => void;
 }): React.JSX.Element {
   const lastGenerationModel = useGenerationModel();
+  const models = useAgentModels();
   const disabledItem = `${POPUP_ITEM_CLASS} data-disabled:text-chrome-fg-muted`;
 
   return (
@@ -709,7 +865,7 @@ function ReviewOptions({
               <Menu.Portal>
                 <Menu.Positioner sideOffset={8} alignOffset={-4} collisionPadding={8} className="z-50">
                   <Menu.Popup className={`${MENU_POPUP_CLASS} min-w-36`}>
-                    {AGENT_MODELS.map((m) => (
+                    {models.map((m) => (
                       <Menu.Item key={m.id} onClick={() => onGenerateReadingOrder(m.id)} className={POPUP_ITEM_CLASS}>
                         <span className="flex-1">{m.label}</span>
                         {m.id === lastGenerationModel && <span className="text-chrome-fg-subtle">last used</span>}
@@ -773,12 +929,14 @@ function QueueRow({
   repoId,
   repoName,
   pull: p,
+  stackSlot,
   opening,
   onOpen,
 }: {
   repoId: string;
   repoName: string;
   pull: Pull;
+  stackSlot: StackSlot | null;
   opening: boolean;
   onOpen: (repoId: string, pull: Pull) => void;
 }): React.JSX.Element {
@@ -808,6 +966,7 @@ function QueueRow({
             <span className="truncate">
               {repoName} #{p.number}
             </span>
+            {stackSlot !== null && <StackPosition slot={stackSlot} />}
           </span>
           {flags.length > 0 && <span className="flex items-center gap-1">{flags}</span>}
         </span>

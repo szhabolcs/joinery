@@ -14,7 +14,8 @@ import { useState } from 'react';
 import { ApiError } from '../lib/apiClient.ts';
 import { goHomebase } from '../lib/router.ts';
 import { useReview } from '../state/ReviewContext.tsx';
-import { useReviewPull } from './ReviewSummaryCard.tsx';
+import { useReviewPull, useReviewStack } from './ReviewSummaryCard.tsx';
+import { StackMenu } from './StackMenu.tsx';
 import { RevisionPicker } from './RevisionPicker.tsx';
 import { Hint } from './controls.tsx';
 import { pathSegments } from '../lib/paths.ts';
@@ -116,6 +117,7 @@ export function Header({ onOpenPalette }: { onOpenPalette: () => void }): React.
     setThreadsPanelOpen,
   } = useReview();
   const pull = useReviewPull(review?.id);
+  const stack = useReviewStack(review?.id);
   const threadsShown = rightPanelOpen && threadsPanelOpen;
 
   const repoName = repo == null ? undefined : pathSegments(repo.rootPath).at(-1);
@@ -157,6 +159,9 @@ export function Header({ onOpenPalette }: { onOpenPalette: () => void }): React.
             ) : (
               <span className="shrink-0 tabular-nums text-chrome-fg-subtle">#{pull.number}</span>
             ))}
+          {stack !== null && review?.prNumber != null && repo != null && (
+            <StackMenu stack={stack} repoId={repo.id} current={review.prNumber} />
+          )}
         </div>
       </Hint>
 

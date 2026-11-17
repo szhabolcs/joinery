@@ -411,4 +411,6 @@ export const giteaForge: Forge = {
   resolvePr,
   viewMergedPrCommits,
   viewPull,
+  // No stacked-PR feature on this host.
+  listStacks: async () => null,
 };

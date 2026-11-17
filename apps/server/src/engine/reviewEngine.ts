@@ -79,6 +79,12 @@ export type ReviewEngineParams = {
   readonly emit: (event: ServerEvent) => void;
   /** This worker stored a new `review_state` version (after commit). */
   readonly onStateChanged?: (reviewId: string) => void;
+  /**
+   * The branch was just pushed (`origin/<branch>` moved to head) while the
+   * fetched PR ref still points elsewhere: poll the repo now, so the PR ref
+   * catches up instead of waiting out the poll interval.
+   */
+  readonly onPushed?: (repoId: string) => void;
 };
 
 /**
@@ -124,6 +130,9 @@ export class ReviewEngine {
   #review: Review;
   readonly #emit: (event: ServerEvent) => void;
   readonly #onStateChanged: (reviewId: string) => void;
+  readonly #onPushed: (repoId: string) => void;
+  /** The head sha `onPushed` last fired for, so one push asks for one poll. */
+  #pushedHead: string | null = null;
   readonly #catFile: CatFile;
   #gitCommonDir: string | null = null;
 
@@ -179,6 +188,7 @@ export class ReviewEngine {
     this.#review = params.review;
     this.#emit = params.emit;
     this.#onStateChanged = params.onStateChanged ?? (() => {});
+    this.#onPushed = params.onPushed ?? (() => {});
     this.#catFile = new CatFile(params.repo.rootPath);
     const placeholder = (revision: Revision): FileList => ({
       reviewId: params.review.id,
@@ -819,7 +829,7 @@ export class ReviewEngine {
           baseMergeBase(review.baseRef, headRef, { cwd }),
           baseMergeBase(review.baseRef, prRef, { cwd }),
         ]);
-        divergenceValue = d;
+        divergenceValue = await this.#discountOwnPush(d, headRef, cwd);
         basesMismatched = baseHead !== null && basePr !== null && baseHead !== basePr;
       } catch {
         // Any of the three throwing leaves both fields at their defaults.
@@ -829,6 +839,31 @@ export class ReviewEngine {
 
     this.#cachedRevisionState = { divergence: divergenceValue, basesMismatched };
     return this.#buildState();
+  }
+
+  /**
+   * A push from this machine updates `origin/<branch>` at once, but the PR
+   * ref (`refs/review/pr/<id>`) only moves on the next poll. In between, the
+   * head looks ahead of the PR (a plain push) or diverged from it (an amend
+   * or rebase, then a force push), and the banner would call code that was
+   * just pushed stale. When `origin/<branch>` is exactly the head, the
+   * remote has it: report in sync and poll now so the PR ref catches up.
+   * Someone else's push moves `origin/<branch>` off the head on the next
+   * fetch, so real remote movement still shows.
+   */
+  async #discountOwnPush(d: Divergence, headRef: string, cwd: string): Promise<Divergence> {
+    const branch = this.#review.branch;
+    if (branch === null || (d.ahead === 0 && d.behind === 0)) return d;
+    const [head, tracking] = await Promise.all([
+      revParse(`${headRef}^{commit}`, { cwd }),
+      revParse(`refs/remotes/origin/${branch}^{commit}`, { cwd }),
+    ]);
+    if (head === null || tracking !== head) return d;
+    if (this.#pushedHead !== head) {
+      this.#pushedHead = head;
+      this.#onPushed(this.#repo.id);
+    }
+    return { ahead: 0, behind: 0 };
   }
 
   /** Assembles a `ReviewState` from `#cachedRevisionState` plus the cheap fields, all computed fresh. */

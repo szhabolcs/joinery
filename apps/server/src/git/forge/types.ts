@@ -5,7 +5,7 @@
  * never a thrown error — callers never wrap these in a try/catch to stay up.
  * Pick an implementation with `forgeFor(repo)`.
  */
-import type { ForgeUnavailableReason, Pull, PullDetail, PullState } from '@joinery/core';
+import type { ForgeUnavailableReason, Pull, PullDetail, PullStack, PullState } from '@joinery/core';
 
 export type ForgeOptions = { cwd: string };
 
@@ -25,7 +25,16 @@ export type ListOpenPullsResult = {
   unavailableReason?: ForgeUnavailableReason;
   /** The origin host `unavailableReason` refers to. */
   unavailableHost?: string | null;
+  /**
+   * The repo's open stacked PRs, stored with the pulls by the poller. Absent
+   * when the forge has no stacks feature (or it isn't enabled there).
+   * Members' `title`/`reviewId` are filled at read time, not stored.
+   */
+  stacks?: StoredStack[];
 };
+
+/** A stack as stored: `PullStack` before the route fills in titles and reviews. */
+export type StoredStack = Omit<PullStack, 'pulls'> & { pulls: Omit<PullStack['pulls'][number], 'title' | 'reviewId'>[] };
 
 /** What `searchPulls` returns: `ListOpenPullsResult`'s availability fields around search hits. */
 export type SearchPullsResult = Omit<ListOpenPullsResult, 'pulls'> & { pulls: PullSearchHit[] };
@@ -77,4 +86,10 @@ export interface Forge {
   viewMergedPrCommits(prNumber: number, options: ForgeOptions): Promise<MergedPrCommits | null>;
   /** One pull in full (description, state, CI, size), any state. */
   viewPull(prNumber: number, options: ForgeOptions): Promise<PullDetail | null>;
+  /**
+   * The repo's open stacked PRs, or `null` when the host has no stacks
+   * feature, it isn't enabled for the repo, or the CLI can't be asked.
+   * Never inferred from base/head chains: only stacks the host reports.
+   */
+  listStacks(options: ForgeOptions): Promise<StoredStack[] | null>;
 }

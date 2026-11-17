@@ -48,6 +48,7 @@ export {
   type Forge,
   type ForgeOptions,
   type ListOpenPullsResult,
+  type StoredStack,
   type MergedPrCommits,
   type PullSearchHit,
   type PullSummary,

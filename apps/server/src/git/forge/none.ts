@@ -13,4 +13,5 @@ export const noForge: Forge = {
   resolvePr: async () => null,
   viewMergedPrCommits: async () => null,
   viewPull: async () => null,
+  listStacks: async () => null,
 };

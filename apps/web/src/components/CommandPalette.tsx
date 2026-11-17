@@ -47,7 +47,6 @@
  * There is deliberately no "ask agent" command here: asking an agent
  * happens from a thread (its composer's `Cmd+Enter` or its Ask agent button).
  */
-import { AGENT_MODELS } from '@joinery/core';
 import { Command, defaultFilter } from 'cmdk';
 import {
   Bot,
@@ -76,7 +75,7 @@ import {
   Waypoints,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getAgentModel, getGenerationModel, useGenerationModel } from '../lib/agentModel.ts';
+import { getAgentModel, getGenerationModel, useAgentModels, useGenerationModel } from '../lib/agentModel.ts';
 import { callApi } from '../lib/apiClient.ts';
 import { openOnboarding } from '../lib/onboarding.ts';
 import { goReview, goSettings } from '../lib/router.ts';
@@ -174,6 +173,7 @@ export function CommandPalette({
   const { chromeMode, setChromeMode, diffTheme, setDiffTheme } = useTheme();
   const [search, setSearch] = useState('');
   const lastGenerationModel = useGenerationModel();
+  const models = useAgentModels();
   const [forcedMode, setForcedMode] = useState<ForcedMode | 'generate' | null>(null);
   // Where the generate page goes back to: the search string it was opened from.
   const generateReturnRef = useRef('');
@@ -589,7 +589,7 @@ export function CommandPalette({
     ));
 
   // The generate page: one run of reading-order generation on the picked model.
-  const modelItems = AGENT_MODELS.map((m) => (
+  const modelItems = models.map((m) => (
     <Command.Item
       key={m.id}
       value={modelItemValue(m.id)}

@@ -14,6 +14,7 @@ import {
   type Branch,
   type Me,
   type Pull,
+  type PullStack,
   type Repo,
   type ResponseOf,
   type Review,
@@ -48,6 +49,8 @@ export interface HomeSnapshot {
   pullsAvailable: ReadonlyMap<string, boolean>;
   /** Repo id → why its pull list is unavailable, when the server said. */
   pullsNotice: ReadonlyMap<string, ForgeNotice>;
+  /** Repo id → its open stacked PRs (GitHub stacks); absent or empty where the forge has none. */
+  stacksByRepo: ReadonlyMap<string, PullStack[]>;
   me: Me | null;
   /** True while the first load is in flight (no data yet). */
   loading: boolean;
@@ -83,6 +86,7 @@ type ReviewsResponse = ResponseOf<'listReviews'>;
 interface RepoPulls {
   available: boolean;
   pulls: Pull[];
+  stacks: PullStack[];
   notice: ForgeNotice | null;
 }
 
@@ -145,9 +149,9 @@ async function loadPulls(repo: Repo, refresh: boolean): Promise<RepoPulls> {
       res.unavailableReason === undefined
         ? null
         : { reason: res.unavailableReason, host: res.unavailableHost ?? null, forge: repo.forge };
-    return { available: res.available, pulls: res.pulls, notice };
+    return { available: res.available, pulls: res.pulls, stacks: res.stacks, notice };
   } catch {
-    return { available: false, pulls: [], notice: null };
+    return { available: false, pulls: [], stacks: [], notice: null };
   }
 }
 
@@ -308,10 +312,12 @@ export function useHomeData(): HomeSnapshot & HomeActions {
       const pullsByRepo = new Map<string, Pull[]>();
       const pullsAvailable = new Map<string, boolean>();
       const pullsNotice = new Map<string, ForgeNotice>();
+      const stacksByRepo = new Map<string, PullStack[]>();
       repos.forEach((repo, i) => {
         const data = results[i]?.data;
         if (data === undefined) return;
         pullsByRepo.set(repo.id, data.pulls);
+        if (data.stacks.length > 0) stacksByRepo.set(repo.id, data.stacks);
         pullsAvailable.set(repo.id, data.available);
         if (data.notice !== null) pullsNotice.set(repo.id, data.notice);
       });
@@ -319,6 +325,7 @@ export function useHomeData(): HomeSnapshot & HomeActions {
         pullsByRepo,
         pullsAvailable,
         pullsNotice,
+        stacksByRepo,
         fetching: results.some((r) => r.isFetching),
         pending: results.some((r) => r.isPending),
       };

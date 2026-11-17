@@ -32,6 +32,7 @@ import {
   forgeUnavailableReasonSchema,
   meSchema,
   pullDetailSchema,
+  pullStackSchema,
   pullSchema,
   pullSearchResultSchema,
   readingOrderPlanSchema,
@@ -96,16 +97,49 @@ export const markViewedBodySchema = z.object({
 });
 export const setAllViewedBodySchema = z.object({ viewed: z.boolean().default(true) });
 export const resolveAllThreadsBodySchema = z.object({ resolved: z.boolean().default(true) });
-/** The models a thread reply can run on, in picker order. Ids are exact; never add a date suffix. */
-export const AGENT_MODELS = [
-  { id: 'claude-fable-5-1', label: 'Fable 5.1' },
-  { id: 'claude-opus-5-5', label: 'Opus 5.5' },
-  { id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
-  { id: 'claude-haiku-5-5', label: 'Haiku 5.5' },
-] as const;
-export const agentModelSchema = z.enum(['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']);
+/**
+ * A model to run an agent on: a family alias (`opus`, `fable`, ...), which
+ * Claude Code resolves to that family's newest model, or an exact id. Never
+ * add a date suffix to an exact id.
+ */
+export const agentModelSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9.\-[\]]{0,99}$/u, 'not a model id');
 export type AgentModel = z.infer<typeof agentModelSchema>;
-export const DEFAULT_AGENT_MODEL: AgentModel = 'claude-haiku-5-5';
+
+/** One entry of the model pickers. */
+export const agentModelOptionSchema = z.object({
+  /** What a request names: a family alias, so a pick follows new releases. */
+  id: agentModelSchema,
+  /** The picker's name for it, e.g. "Opus 5.5". */
+  label: z.string(),
+  /** The exact model `id` stands for today; null when Claude Code didn't say. */
+  resolved: z.string().nullable(),
+});
+export type AgentModelOption = z.infer<typeof agentModelOptionSchema>;
+
+/**
+ * The pickers until the server has asked Claude Code for its models
+ * (`GET /api/models`), and whenever it can't. Aliases, so they never go stale.
+ */
+export const AGENT_MODELS: readonly AgentModelOption[] = [
+  { id: 'fable', label: 'Fable', resolved: null },
+  { id: 'opus', label: 'Opus', resolved: null },
+  { id: 'sonnet', label: 'Sonnet', resolved: null },
+  { id: 'haiku', label: 'Haiku', resolved: null },
+];
+export const DEFAULT_AGENT_MODEL: AgentModel = 'haiku';
+
+/**
+ * The picker entry for a remembered pick. A pick made before picks were
+ * aliases (`claude-haiku-5-5`) maps to its family's entry, so it keeps
+ * following that family instead of falling off the list.
+ */
+export function findAgentModel(models: readonly AgentModelOption[], id: string): AgentModelOption | undefined {
+  return (
+    models.find((m) => m.id === id) ??
+    models.find((m) => m.resolved === id) ??
+    models.find((m) => /^[a-z]+$/u.test(m.id) && id.includes(m.id))
+  );
+}
 
 export const createThreadBodySchema = z.object({
   path: z.string().min(1),
@@ -460,6 +494,8 @@ export const api = {
     response: z.object({
       available: z.boolean(),
       pulls: z.array(pullSchema),
+      /** The repo's open stacks; empty when the forge has none or no stacks feature. */
+      stacks: z.array(pullStackSchema),
       unavailableReason: forgeUnavailableReasonSchema.optional(),
       unavailableHost: z.string().nullable().optional(),
     }),
@@ -763,7 +799,19 @@ export const api = {
     path: (id: string) => `/api/reviews/${encodeURIComponent(id)}/pull`,
     body: undefined,
     query: z.object({ refresh: z.enum(['true', 'false']).optional() }),
-    response: z.object({ pull: pullDetailSchema.nullable() }),
+    response: z.object({
+      pull: pullDetailSchema.nullable(),
+      /** The stack the PR belongs to, when the forge reports stacks; null otherwise. */
+      stack: pullStackSchema.nullable(),
+    }),
+  }),
+  /** The models the pickers offer, as the local Claude Code reports them. */
+  listAgentModels: def({
+    method: 'GET',
+    path: () => '/api/models',
+    body: undefined,
+    query: undefined,
+    response: z.object({ models: z.array(agentModelOptionSchema) }),
   }),
   cancelRun: def({
     method: 'POST',

@@ -13,7 +13,7 @@ import { query, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { AgentModel, Review, ServerEvent, Thread } from '@joinery/core';
 import { isAbsolute, relative } from 'node:path';
 import { claudeExecutableOption } from './claudeExecutable.ts';
-import { AGENT_MODEL_ID } from './model.ts';
+import { AGENT_MODEL_ID, resolveAgentModel } from './model.ts';
 import { makeAgentCanUseTool } from './permissions.ts';
 import { gitToolDefinitions } from './gitTools.ts';
 import { createReviewTools, trimToLines, type Invoke } from './tools.ts';
@@ -64,6 +64,9 @@ export function buildThreadReplyTask(input: { thread: Thread; diffText: string }
     'reply, react, create_thread, resolve_thread, mark_viewed,',
     'set_reading_order, set_review_status.',
     '',
+    'Keep the reply short and answer the question directly. Go into detail',
+    '(a walkthrough, alternatives, longer code) only when the user asks for more.',
+    '',
     `Thread ${thread.id} on ${thread.path}:${String(thread.startLine)}-${String(thread.endLine)} (${thread.side} side):`,
     '',
     threadBody,
@@ -95,7 +98,7 @@ export function buildFollowUpTask(input: { thread: Thread; codeNote: string | nu
   if (codeNote !== null) lines.push('', codeNote);
   lines.push(
     '',
-    `Answer the latest user message by calling \`reply\` with thread id ${thread.id}.${restarted ? ' If you already replied to it, end your turn.' : ''}`,
+    `Answer the latest user message by calling \`reply\` with thread id ${thread.id}. Keep it short unless they asked for more detail.${restarted ? ' If you already replied to it, end your turn.' : ''}`,
   );
   return lines.join('\n');
 }
@@ -148,7 +151,7 @@ export async function runThreadReplyAgent(
         ...claudeExecutableOption(),
         abortController,
         cwd,
-        model,
+        model: resolveAgentModel(model),
         disallowedTools: ['Write', 'Edit', 'NotebookEdit', 'Bash'],
         canUseTool: makeAgentCanUseTool({ cwd }),
         mcpServers: { joinery: tools.server },

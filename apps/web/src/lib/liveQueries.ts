@@ -74,12 +74,39 @@ function ensureListeners(): void {
   });
 }
 
+/**
+ * Topics some screen watched before and none watches now. Their events go
+ * unheard (the server only sends watched topics), so the cache can be stale
+ * by more than `staleTime` hides: marking every file viewed in a review,
+ * then going back to Homebase, would show the review as unfinished.
+ */
+const lapsed = new Set<string>();
+const watchCounts = new Map<string, number>();
+
 /** Watch `topics` while the calling component is mounted, keeping their queries live. */
 export function useWatchTopics(topics: readonly Topic[]): void {
   const signature = topics.join('\n');
   useEffect(() => {
     ensureListeners();
-    const unwatchers = topics.map((topic) => eventsClient.watch(topic));
+    const unwatchers = topics.map((topic) => {
+      watchCounts.set(topic, (watchCounts.get(topic) ?? 0) + 1);
+      // Watched again after a gap: re-read now what changed in between.
+      if (lapsed.delete(topic)) {
+        const key = keyFor(topic);
+        if (key !== null) void queryClient.invalidateQueries({ queryKey: key });
+      }
+      const unwatch = eventsClient.watch(topic);
+      return () => {
+        unwatch();
+        const left = (watchCounts.get(topic) ?? 1) - 1;
+        if (left > 0) {
+          watchCounts.set(topic, left);
+        } else {
+          watchCounts.delete(topic);
+          lapsed.add(topic);
+        }
+      };
+    });
     return () => {
       for (const unwatch of unwatchers) unwatch();
     };

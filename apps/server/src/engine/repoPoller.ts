@@ -42,6 +42,7 @@ import {
   revParse,
   type Forge,
   type ListOpenPullsResult,
+  type StoredStack,
 } from '../git/index.ts';
 import type { EventBus } from './bus.ts';
 import { pullFactsOf, refreshReviewState, type PullFacts } from './reviewState.ts';
@@ -51,6 +52,8 @@ const WATCHED_INTERVAL_MS = 15_000;
 const IDLE_INTERVAL_MS = 180_000;
 /** A fetch that hangs (dead network, an SSH prompt nobody can answer) is killed rather than left holding the loop. */
 const FETCH_TIMEOUT_MS = 60_000;
+/** A forge that had no stacks feature for the repo is asked again after this long. */
+const STACKS_RETRY_MS = 60 * 60_000;
 
 /** `git fetch` and `ls-remote`: network-bound, a few at a time across every repo. */
 const network = new PQueue({ concurrency: 3 });
@@ -77,6 +80,8 @@ class RepoPoller {
   #defaultBranchChecked = false;
   /** Merged PRs whose pre-merge base was already asked of the forge this process. */
   readonly #mergedAsked = new Set<string>();
+  /** Until when the forge's stacks are not asked for (it had none to give). */
+  #stacksRetryAt = 0;
 
   constructor(deps: RepoPollerDeps, repoId: string) {
     this.#deps = deps;
@@ -135,13 +140,18 @@ class RepoPoller {
     this.#reviewIds = reviews.map((r) => r.id);
     const forge = forgeFor(repo);
 
+    // The fetch and the forge calls don't depend on each other, so they run
+    // side by side: a newly opened PR's title and description arrive after
+    // the slower of the two rather than after both in a row.
     // Like lazygit: never fetch under a git command the user is running.
-    if (!(await gitBusy(repo))) {
-      repo = await this.#fetch(repo, reviews, forge);
-    }
-
-    const pulls = await this.#pollPulls(repo, forge);
-    await Promise.all(reviews.map((review) => local.add(() => this.#refreshReview(repo, review, forge, pulls))));
+    const fetched = gitBusy(repo).then((busy) => (busy ? repo : this.#fetch(repo, reviews, forge)));
+    const facts = this.#pollPulls(repo, forge).then((pulls) =>
+      Promise.all(reviews.map((review) => this.#forgeFacts(repo, review, forge, pulls))),
+    );
+    const [current, forgeFacts] = await Promise.all([fetched, facts]);
+    await Promise.all(
+      forgeFacts.map(({ original, review, facts }) => local.add(() => this.#refreshReview(current, original, review, facts))),
+    );
   }
 
   /** One fetch for the repo, one for every review's PR head; returns the repo with its default branch current. */
@@ -182,8 +192,12 @@ class RepoPoller {
     const previous = stored === null ? null : parsePulls(stored.pulls);
 
     const { login } = await getMe(repo.rootPath, forge, repo.remoteHost);
-    const result = await forgeCalls.add(() => forge.listOpenPulls({ cwd: repo.rootPath, login }));
+    let result = await forgeCalls.add(() => forge.listOpenPulls({ cwd: repo.rootPath, login }));
     if (!result.available && previous?.available === true) return previous;
+    if (result.available && result.pulls.length > 0) {
+      const stacks = await this.#stacks(repo, forge, previous);
+      if (stacks !== undefined) result = { ...result, stacks };
+    }
     const json = JSON.stringify(result);
     if (stored === null || stored.pulls !== json) {
       await putRepoState(db, repo.id, json, stored?.version ?? null);
@@ -192,7 +206,13 @@ class RepoPoller {
     return result;
   }
 
-  async #refreshReview(repo: Repo, original: Review, forge: Forge, pulls: ListOpenPullsResult): Promise<void> {
+  /** Step 3's forge half: the review's PR, its target branch and the PR's facts. Needs no fetch. */
+  async #forgeFacts(
+    repo: Repo,
+    original: Review,
+    forge: Forge,
+    pulls: ListOpenPullsResult,
+  ): Promise<{ original: Review; review: Review; facts: PullFacts }> {
     const { db } = this.#deps;
     let review = original;
     let facts: PullFacts = pullFactsOf(await getReviewState(db, review.id));
@@ -211,7 +231,27 @@ class RepoPoller {
         if (target !== undefined && target !== review.baseRef) review = await setBaseRef(db, review.id, target);
       }
     }
+    return { original, review, facts };
+  }
 
+  /** Step 3's git half, after the fetch: hand the facts to `refreshReviewState`. */
+  /**
+   * The repo's stacked PRs, where the forge has them. A host or repo
+   * without stacks is asked again only after `STACKS_RETRY_MS`, so it costs
+   * one call an hour rather than one a round. `undefined`: no stacks to store.
+   */
+  async #stacks(repo: Repo, forge: Forge, previous: ListOpenPullsResult | null): Promise<StoredStack[] | undefined> {
+    if (Date.now() < this.#stacksRetryAt) return previous?.stacks;
+    const stacks = await forgeCalls.add(() => forge.listStacks({ cwd: repo.rootPath }));
+    if (stacks === null) {
+      this.#stacksRetryAt = Date.now() + STACKS_RETRY_MS;
+      return undefined;
+    }
+    return stacks;
+  }
+
+  async #refreshReview(repo: Repo, original: Review, review: Review, facts: PullFacts): Promise<void> {
+    const { db } = this.#deps;
     const rowChanged = review.prNumber !== original.prNumber || review.baseRef !== original.baseRef;
     const before = await getReviewState(db, review.id);
     const after = await refreshReviewState({ db, onChanged: () => {} }, repo, review, { pull: facts });

@@ -1,15 +1,15 @@
 /**
  * "Ask ▾ Model": a split button. The "Ask" half acts; the model half opens
- * a Base UI menu over `AGENT_MODELS`. The pick is shared and remembered
+ * a Base UI menu over the server's models (`useAgentModels`). The pick is shared and remembered
  * (`lib/agentModel.ts`), so every Ask button shows the same model, unless
  * the caller owns the pick (`model` + `onModelChange`), as the reading-order
  * "Generate with" button does.
  */
 import { Menu } from '@base-ui-components/react/menu';
-import { AGENT_MODELS, type AgentModel } from '@joinery/core';
+import type { AgentModel } from '@joinery/core';
 import { Check, ChevronDown } from 'lucide-react';
 import { useRef } from 'react';
-import { setAgentModel, useAgentModel } from '../lib/agentModel.ts';
+import { agentModelLabel, setAgentModel, useAgentModel, useAgentModels } from '../lib/agentModel.ts';
 import { Hint, MENU_POPUP_CLASS, POPUP_ITEM_CLASS, Tick } from './controls.tsx';
 
 export function AskButton({
@@ -35,7 +35,8 @@ export function AskButton({
 }): React.JSX.Element {
   const sharedModel = useAgentModel();
   const model = controlledModel ?? sharedModel;
-  const label = AGENT_MODELS.find((m) => m.id === model)?.label ?? model;
+  const models = useAgentModels();
+  const label = agentModelLabel(models, model);
   // Set by a pick, so `onPicked` runs after the menu has handed focus back
   // to its trigger rather than racing it.
   const pickedRef = useRef(false);
@@ -80,7 +81,7 @@ export function AskButton({
                   pickedRef.current = true;
                 }}
               >
-                {AGENT_MODELS.map((m) => (
+                {models.map((m) => (
                   <Menu.RadioItem
                     key={m.id}
                     value={m.id}

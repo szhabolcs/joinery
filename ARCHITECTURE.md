@@ -75,11 +75,13 @@ packages/core  zod schemas shared by all three
   - Never resolve, delete or hide a thread.
   - Refresh is staged ("N files updated · Refresh"), never applied under the cursor.
 - **Remote ahead (`0 N`) and diverged states get a loud banner.** Reviewing stale code is the worst failure.
+  - Your own push isn't remote movement: while `origin/<branch>` is exactly the head, the not-yet-refetched PR ref is treated as stale (in sync), and the repo is polled at once so it catches up.
 - **Transport (`WS /api/events`):**
   - Clients `watch` topics: `home`, `repo:<id>` and `review:<id>`.
   - `topic.changed` carries only a version; the client refetches through the normal API.
   - A review topic also streams file lists (tagged by revision), `root.rebound`, `thread.*` and `run.*`.
   - The browser never polls. Reconnecting just asks for the list again.
+- **Stacked PRs** come only from a forge that reports them (GitHub's stacks API, `forge.listStacks`), stored with the repo's pulls. Never inferred from base/head chains; a host without the feature is re-asked hourly.
 - **Forges:** everything host-specific sits behind one `Forge` seam (`git/forge/`, picked by `forgeFor(repo)`). Nothing outside that module calls `gh`/`glab`/`gt` or hard-codes `refs/pull/`. Gitea calls pass the instance (`--host`) and the `owner/name` path explicitly, from the origin, rather than relying on `gt`'s repo discovery.
 
 ## Threads, viewed state, reading order
@@ -119,6 +121,7 @@ packages/core  zod schemas shared by all three
   - `disallowedTools` includes `Write`, `Edit`, `NotebookEdit` and `Bash`.
   - `canUseTool` allows only `Read`/`Grep`/`Glob` inside the run's `cwd`, plus the in-process `joinery` tools the run kind may use (`tools.ts`, thin wrappers over the HTTP routes, scoped to the run's review) and the read-only git tools (`gitTools.ts`).
   - Everything else, including tools the SDK adds later, is denied.
+- **Models:** the pickers list what the local Claude Code reports (`supportedModels()`, cached in `cache_entry`), as family aliases (`opus`, `fable`, ...). A run starts on the exact model the alias resolves to. Nothing hard-codes a model version.
 - **Settings:**
   - `settingSources: []`, so the reviewed repo's `.claude` settings can't grant tools.
   - `cwd` is the attached root, or else a cached agent worktree.

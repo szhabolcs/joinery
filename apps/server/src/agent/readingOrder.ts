@@ -15,6 +15,7 @@ import { query, type SDKMessage, type SDKResultMessage } from '@anthropic-ai/cla
 import { READING_ORDER_RULES, readingOrderPlanSchema, type AgentModel, type ReadingOrderPlan } from '@joinery/core';
 import { claudeExecutableOption } from './claudeExecutable.ts';
 import { gitToolDefinitions } from './gitTools.ts';
+import { resolveAgentModel } from './model.ts';
 import { makeAgentCanUseTool } from './permissions.ts';
 import { AGENT_SYSTEM_APPEND, buildPrompt } from './reviewContext.ts';
 import {
@@ -126,7 +127,7 @@ export async function generateReadingOrderPlan(options: GenerateReadingOrderPlan
         ...executable,
         ...(options.abortController === undefined ? {} : { abortController: options.abortController }),
         cwd: options.cwd,
-        ...(options.model === undefined ? {} : { model: options.model }),
+        ...(options.model === undefined ? {} : { model: resolveAgentModel(options.model) }),
         mcpServers: { joinery: tools.server },
         // `Bash` is removed outright rather than gated through a read-only
         // allowlist: no shell at all for the embedded agent, on either run kind.

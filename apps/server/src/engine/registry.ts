@@ -115,6 +115,7 @@ export class EngineRegistry {
         }
       },
       onStateChanged: (id) => this.bus.reviewChanged(id),
+      onPushed: (repoId) => this.pollers.kick(repoId),
     });
     this.#engines.set(reviewId, { engine, lastUsedAt: Date.now() });
     return engine;

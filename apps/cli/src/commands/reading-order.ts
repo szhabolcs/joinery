@@ -84,7 +84,7 @@ export const generate: Command = {
     const rawModel = flagString(parsed.flags, 'model');
     const model = rawModel === undefined ? undefined : agentModelSchema.safeParse(rawModel);
     if (model !== undefined && !model.success) {
-      throw new UsageError(`unknown model "${rawModel}"; one of: ${AGENT_MODELS.map((m) => m.id).join(', ')}`);
+      throw new UsageError(`not a model id: "${rawModel}"; use a family (${AGENT_MODELS.map((m) => m.id).join(', ')}) or an exact id`);
     }
     const result = await client.generateReadingOrder(id, model?.data);
     if (maybePrintJson(parsed, result)) return;

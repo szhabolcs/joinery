@@ -193,6 +193,32 @@ export type Pull = z.infer<typeof pullSchema>;
 export const pullStateSchema = z.enum(['open', 'draft', 'merged', 'closed']);
 export type PullState = z.infer<typeof pullStateSchema>;
 
+/**
+ * A GitHub stacked pull request: PRs that build on each other, each one's
+ * base the head of the one below. Only forges that report stacks have them
+ * (GitHub's stacks API); a repo without the feature simply has none.
+ */
+export const pullStackMemberSchema = z.object({
+  number: z.number().int().positive(),
+  headRefName: z.string(),
+  state: pullStateSchema,
+  /** From the open-pull list; null for a merged or closed member. */
+  title: z.string().nullable(),
+  /** An existing review of this member; filled by the server from the DB. */
+  reviewId: z.string().nullable(),
+});
+export type PullStackMember = z.infer<typeof pullStackMemberSchema>;
+
+export const pullStackSchema = z.object({
+  /** The stack's number on the forge. */
+  number: z.number().int().positive(),
+  /** The branch the bottom PR targets. */
+  baseRefName: z.string(),
+  /** Bottom (closest to the base) to top. */
+  pulls: z.array(pullStackMemberSchema),
+});
+export type PullStack = z.infer<typeof pullStackSchema>;
+
 /** One hit of a cross-repo PR search: any state, so no head/base (`createReview` resolves them from the number). */
 export const pullSearchResultSchema = z.object({
   repoId: z.string(),

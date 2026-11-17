@@ -78,7 +78,7 @@ import {
   type Db,
 } from '../db/index.ts';
 import { listDirs } from '../fs/dirs.ts';
-import { buildReviewSummaries, getMeCached, getStoredPulls } from '../homebase.ts';
+import { buildReviewSummaries, getMeCached, getStoredPulls, openPullDetail, readStacks } from '../homebase.ts';
 import { searchPullsCached } from '../pullSearchCache.ts';
 import type { StoredCacheDeps } from '../storedCache.ts';
 import {
@@ -105,6 +105,7 @@ import { cancelRun, generateReadingOrder, requestThreadReply } from '../agent/ru
 import type { Invoke } from '../agent/tools.ts';
 import { deleteReviewSessions } from '../agent/sessions.ts';
 import { resolveRunCwd } from '../agent/worktree.ts';
+import { listAgentModels } from '../agent/model.ts';
 import { externalFile, installServer, languageOf, lsp, type LspSource, type LspTarget } from '../lsp/index.ts';
 import { installableFor } from '../lsp/install.ts';
 import { invalidChoice, lspChoice, saveLspChoice } from '../lsp/choices.ts';
@@ -327,6 +328,10 @@ export function buildRoutes(deps: RoutesDeps): Hono {
     return c.json(await getMeCached(homeDeps));
   });
 
+  app.get('/api/models', async (c) => {
+    return c.json({ models: await listAgentModels(homeDeps) });
+  });
+
   app.get('/api/version', async (c) => {
     const query = parseQuery(versionQuerySchema, c);
     return c.json(await getVersionInfo(query.refresh === 'true'));
@@ -400,6 +405,7 @@ export function buildRoutes(deps: RoutesDeps): Hono {
     return c.json({
       available: result.available,
       pulls,
+      stacks: await readStacks(deps.db, repo, result),
       unavailableReason: result.unavailableReason,
       unavailableHost: result.unavailableHost,
     });
@@ -532,8 +538,17 @@ export function buildRoutes(deps: RoutesDeps): Hono {
     if (repo === null) throw notFound(`repo ${review.repoId} not found`);
     const query = parseQuery(reviewPullQuerySchema, c);
     if (query.refresh === 'true') pollers.kick(repo.id);
-    const pull = (await getReviewState(deps.db, id))?.pull ?? null;
-    return c.json({ pull });
+    const stored = (await getReviewState(deps.db, id))?.pull ?? null;
+    // A review opened from a PR has no stored detail until the poller's
+    // first round finishes (a fetch and a `gh pr view`). The open-pull list
+    // it already stored has everything but the description and url, so the
+    // card shows the title, state and CI at once and fills in the rest when
+    // the poller announces the detail.
+    const pull = stored ?? (review.prNumber === null ? null : await openPullDetail(deps.db, repo, review.prNumber));
+    const prNumber = review.prNumber;
+    const stacks = prNumber === null ? [] : await readStacks(deps.db, repo, await getStoredPulls(deps.db, repo));
+    const stack = stacks.find((s) => s.pulls.some((p) => p.number === prNumber)) ?? null;
+    return c.json({ pull, stack });
   });
 
   app.get('/api/reviews/:id/files', async (c) => {

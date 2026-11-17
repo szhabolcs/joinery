@@ -15,6 +15,7 @@ import type {
   PullSearchHit,
   ResolvedPr,
   SearchPullsResult,
+  StoredStack,
 } from './types.ts';
 
 /** Run `gh` (see `runCli`): stdout on exit 0, `null` on anything else, including a host known to lack `gh`. */
@@ -409,6 +410,62 @@ async function searchPulls(
   }
 }
 
+const stackListItemSchema = z.object({
+  number: z.number().int().positive(),
+  open: z.boolean().default(true),
+  base: z.object({ ref: z.string() }),
+  pull_requests: z.array(
+    z.object({
+      number: z.number().int().positive(),
+      state: z.string(),
+      draft: z.boolean().default(false),
+      merged_at: z.string().nullable().default(null),
+      head: z.object({ ref: z.string() }),
+    }),
+  ),
+});
+
+/**
+ * The repo's open stacked PRs, from GitHub's stacks API
+ * (`GET /repos/{owner}/{repo}/stacks`, every page). A host or repo without
+ * the feature answers with an error, and that is `null`: stacks are only
+ * shown where GitHub has them, never guessed from base/head chains.
+ * `pull_requests` comes bottom to top, the order the stack was built in.
+ */
+async function listStacks(options: ForgeOptions): Promise<StoredStack[] | null> {
+  const stdout = await runGh(
+    [
+      'api',
+      '--paginate',
+      '--slurp',
+      '-H',
+      'X-GitHub-Api-Version: 2026-03-10',
+      'repos/{owner}/{repo}/stacks?per_page=100',
+    ],
+    options.cwd,
+  );
+  if (stdout === null) return null;
+  try {
+    // `--slurp` wraps the pages in one array.
+    const pages = z.array(z.array(stackListItemSchema)).safeParse(JSON.parse(stdout));
+    if (!pages.success) return null;
+    return pages.data
+      .flat()
+      .filter((stack) => stack.open)
+      .map((stack) => ({
+        number: stack.number,
+        baseRefName: stack.base.ref,
+        pulls: stack.pull_requests.map((p) => ({
+          number: p.number,
+          headRefName: p.head.ref,
+          state: p.merged_at !== null ? 'merged' : p.state === 'closed' ? 'closed' : p.draft ? 'draft' : 'open',
+        })),
+      }));
+  } catch {
+    return null;
+  }
+}
+
 async function currentLogin(cwd: string): Promise<string | null> {
   const stdout = await runGh(['api', 'user', '--jq', '.login'], cwd);
   const login = stdout?.trim() ?? '';
@@ -428,4 +485,5 @@ export const githubForge: Forge = {
   resolvePr,
   viewMergedPrCommits,
   viewPull,
+  listStacks,
 };

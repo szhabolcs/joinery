@@ -5,7 +5,7 @@
  * shows the stats only.
  */
 import { Collapsible } from '@base-ui-components/react/collapsible';
-import type { CiStatus, PullDetail, PullState } from '@joinery/core';
+import type { CiStatus, PullDetail, PullStack, PullState, ResponseOf } from '@joinery/core';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
@@ -41,12 +41,20 @@ const STATE_TONE: Record<PullState, Tone> = {
  * (title, CI, merged, retargeted), the query re-reads.
  */
 export function useReviewPull(reviewId: string | undefined): PullDetail | null {
-  const query = useQuery({
+  return useReviewPullQuery(reviewId)?.pull ?? null;
+}
+
+/** The stack the review's PR belongs to (GitHub stacked PRs), from the same read; null when it's in none. */
+export function useReviewStack(reviewId: string | undefined): PullStack | null {
+  return useReviewPullQuery(reviewId)?.stack ?? null;
+}
+
+function useReviewPullQuery(reviewId: string | undefined): ResponseOf<'getReviewPull'> | undefined {
+  return useQuery({
     queryKey: queryKeys.reviewPull(reviewId ?? ''),
-    queryFn: async () => (await callApi('getReviewPull', { params: [reviewId ?? ''], query: {} })).pull,
+    queryFn: () => callApi('getReviewPull', { params: [reviewId ?? ''], query: {} }),
     enabled: reviewId !== undefined,
-  });
-  return query.data ?? null;
+  }).data;
 }
 
 export function ReviewSummaryCard(): React.JSX.Element | null {

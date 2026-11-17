@@ -386,4 +386,6 @@ export const gitlabForge: Forge = {
   resolvePr,
   viewMergedPrCommits,
   viewPull,
+  // No stacked-PR feature on this host.
+  listStacks: async () => null,
 };

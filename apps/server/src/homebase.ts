@@ -6,8 +6,9 @@
  * runs git or asks the forge; the repo pollers keep that state current and
  * announce changes on the `home` topic.
  */
-import type { CiStatus, Repo, Review, ReviewSummary } from '@joinery/core';
+import type { CiStatus, PullDetail, PullStack, Repo, Review, ReviewSummary } from '@joinery/core';
 import {
+  findReviewByBranch,
   getRepoState,
   listRepos,
   listReviewStates,
@@ -143,4 +144,47 @@ function emptySummary(reviewId: string): ReviewSummary {
     unreadAgentReplies: 0,
     done: false,
   };
+}
+
+/**
+ * A `PullDetail` from the repo's stored open-pull list, for a review whose
+ * own detail the poller hasn't read yet. It has no description or url (only
+ * `gh pr view` reports those); null when the list doesn't have the PR.
+ */
+export async function openPullDetail(db: Db, repo: Repo, prNumber: number): Promise<PullDetail | null> {
+  const open = (await getStoredPulls(db, repo)).pulls.find((p) => p.number === prNumber);
+  if (open === undefined) return null;
+  return {
+    number: open.number,
+    title: open.title,
+    body: '',
+    state: open.isDraft ? 'draft' : 'open',
+    authorLogin: open.authorLogin,
+    baseRefName: open.baseRefName,
+    ci: open.ci,
+    additions: open.additions,
+    deletions: open.deletions,
+    changedFiles: open.changedFiles,
+    url: null,
+  };
+}
+
+/**
+ * The repo's stacks as `PullStack`s: the stored members, with each one's
+ * title from the open-pull list and its review (if any) from the DB.
+ */
+export async function readStacks(db: Db, repo: Repo, stored: ListOpenPullsResult): Promise<PullStack[]> {
+  const titles = new Map(stored.pulls.map((p) => [p.number, p.title] as const));
+  return Promise.all(
+    (stored.stacks ?? []).map(async (stack) => ({
+      ...stack,
+      pulls: await Promise.all(
+        stack.pulls.map(async (member) => ({
+          ...member,
+          title: titles.get(member.number) ?? null,
+          reviewId: (await findReviewByBranch(db, repo.id, member.headRefName))?.id ?? null,
+        })),
+      ),
+    })),
+  );
 }
