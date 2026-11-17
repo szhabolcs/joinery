@@ -240,3 +240,11 @@ export function setReaction(id: string, body: BodyOf<'setReaction'>): Promise<Re
 export function _resetTokenCache(): void {
   cachedToken = undefined;
 }
+
+export function getReviewOrder(): Promise<ResponseOf<'getReviewOrder'>> {
+  return send('getReviewOrder', { path: api.getReviewOrder.path() });
+}
+
+export function setReviewOrder(body: BodyOf<'setReviewOrder'>): Promise<ResponseOf<'setReviewOrder'>> {
+  return send('setReviewOrder', { path: api.setReviewOrder.path(), body });
+}

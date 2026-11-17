@@ -3,10 +3,12 @@
  * drop (no library). A row spreads `rowProps(key)` onto its element; while a
  * row is dragged over another, the target carries `data-drop="before"` or
  * `"after"` for the drop line. `move(key, delta)` is the keyboard path (the
- * grip handle's arrow keys).
+ * grip handle's arrow keys). Either way the caller gets one move: which
+ * row, and which row it lands before or after.
  */
 import { useState } from 'react';
-import { moveKey } from './stacks.ts';
+
+export type ReorderMove = (moved: string, target: string, side: 'before' | 'after') => void;
 
 export interface ReorderRowProps {
   draggable: boolean;
@@ -24,8 +26,8 @@ export interface Reorder {
   move(key: string, delta: number): void;
 }
 
-/** `keys`: the rows in their shown order. `onReorder` gets the new order. */
-export function useReorder(keys: readonly string[], onReorder: (keys: string[]) => void, enabled: boolean): Reorder {
+/** `keys`: the rows in their shown order. */
+export function useReorder(keys: readonly string[], onMove: ReorderMove, enabled: boolean): Reorder {
   const [dragged, setDragged] = useState<string | null>(null);
   const [target, setTarget] = useState<{ key: string; side: 'before' | 'after' } | null>(null);
 
@@ -58,11 +60,7 @@ export function useReorder(keys: readonly string[], onReorder: (keys: string[]) 
     },
     onDrop: (e) => {
       e.preventDefault();
-      if (dragged !== null && target !== null && dragged !== target.key) {
-        const rest = keys.filter((k) => k !== dragged);
-        const at = rest.indexOf(target.key) + (target.side === 'after' ? 1 : 0);
-        onReorder(moveKey(keys, dragged, at));
-      }
+      if (dragged !== null && target !== null && dragged !== target.key) onMove(dragged, target.key, target.side);
       finish();
     },
     onDragEnd: finish,
@@ -71,11 +69,9 @@ export function useReorder(keys: readonly string[], onReorder: (keys: string[]) 
   });
 
   const move = (key: string, delta: number): void => {
-    const from = keys.indexOf(key);
-    if (from === -1) return;
-    const to = from + delta;
-    if (to < 0 || to >= keys.length) return;
-    onReorder(moveKey(keys, key, to));
+    const neighbour = keys[keys.indexOf(key) + delta];
+    if (keys.indexOf(key) === -1 || neighbour === undefined) return;
+    onMove(key, neighbour, delta < 0 ? 'before' : 'after');
   };
 
   return { rowProps, move };

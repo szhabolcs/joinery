@@ -51,6 +51,8 @@ export interface HomeSnapshot {
   pullsNotice: ReadonlyMap<string, ForgeNotice>;
   /** Repo id → its open stacked PRs (GitHub stacks); absent or empty where the forge has none. */
   stacksByRepo: ReadonlyMap<string, PullStack[]>;
+  /** The "Custom" order of Currently reviewing: review ids, top first (shared with the CLI). */
+  reviewOrder: readonly string[];
   me: Me | null;
   /** True while the first load is in flight (no data yet). */
   loading: boolean;
@@ -76,6 +78,8 @@ export interface HomeActions {
   archiveReview(id: string): Promise<void>;
   unarchiveReview(id: string): Promise<void>;
   generateReadingOrder(id: string, model: AgentModel): Promise<void>;
+  /** Save the whole "Custom" order (review ids, top first). */
+  setReviewOrder(reviewIds: readonly string[]): Promise<void>;
   addRepo(path: string): Promise<Repo>;
   addRepos(paths: string[]): Promise<AddReposResult>;
   listDirs(path?: string): Promise<ListDirsResult>;
@@ -257,6 +261,19 @@ async function generateReadingOrder(id: string, model: AgentModel): Promise<void
   await invalidateHome();
 }
 
+async function setReviewOrder(reviewIds: readonly string[]): Promise<void> {
+  // Optimistic, so a drop lands at once; the server's answer (archived ids
+  // dropped) replaces it.
+  queryClient.setQueryData<ResponseOf<'getReviewOrder'>>(queryKeys.reviewOrder, { reviewIds: [...reviewIds] });
+  try {
+    const res = await callApi('setReviewOrder', { body: { reviewIds: [...reviewIds], mode: 'replace' } });
+    queryClient.setQueryData(queryKeys.reviewOrder, res);
+  } catch (err) {
+    setActionError(errorMessage(err, 'Failed to save the order'));
+    await queryClient.invalidateQueries({ queryKey: queryKeys.reviewOrder });
+  }
+}
+
 async function addRepo(path: string): Promise<Repo> {
   try {
     const res = await callApi('addRepo', { body: { path } });
@@ -297,6 +314,7 @@ const actions: HomeActions = {
   archiveReview,
   unarchiveReview,
   generateReadingOrder,
+  setReviewOrder,
   addRepo,
   addRepos,
   listDirs,
@@ -306,6 +324,8 @@ export function useHomeData(): HomeSnapshot & HomeActions {
   const reposQuery = useQuery({ queryKey: queryKeys.repos, queryFn: () => callApi('listRepos') });
   const meQuery = useQuery({ queryKey: queryKeys.me, queryFn: () => callApi('me') });
   const reviewsQuery = useQuery({ queryKey: queryKeys.reviews, queryFn: () => callApi('listReviews') });
+  const reviewOrderQuery = useQuery({ queryKey: queryKeys.reviewOrder, queryFn: () => callApi('getReviewOrder') });
+  const reviewOrder = useMemo(() => reviewOrderQuery.data?.reviewIds ?? [], [reviewOrderQuery.data]);
   const repos = useMemo(() => reposQuery.data?.repos ?? [], [reposQuery.data]);
   const combinePulls = useCallback(
     (results: ReadonlyArray<{ data: RepoPulls | undefined; isFetching: boolean; isPending: boolean }>) => {
@@ -374,6 +394,7 @@ export function useHomeData(): HomeSnapshot & HomeActions {
     ...lists,
     ...pulls,
     me: meQuery.data ?? null,
+    reviewOrder,
     loading,
     refreshing: !loading && fetching,
     error: error ?? (queryError === null ? null : errorMessage(queryError, 'Failed to load')),

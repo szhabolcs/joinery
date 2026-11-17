@@ -1,6 +1,6 @@
 import { revisionSchema } from '@joinery/core';
 import * as client from '../client.ts';
-import { UsageError } from '../args.ts';
+import { UsageError, flagBoolean } from '../args.ts';
 import { printLine, printTable } from '../format.ts';
 import type { Command } from './types.ts';
 import { maybePrintJson, parseCommand, requireFlag, requirePositional, wantsHelp } from './shared.ts';
@@ -139,5 +139,36 @@ export const viewed: Command = {
     const result = await client.markViewed(id, path);
     if (maybePrintJson(parsed, result)) return;
     printLine(`marked ${path} viewed`);
+  },
+};
+
+export const order: Command = {
+  path: 'order',
+  summary: "Show or set Homebase's custom order of reviews",
+  usage: 'joinery order [<id>...] [--replace] [--json]',
+  async run(argv) {
+    const parsed = parseCommand(argv, [{ name: 'replace', type: 'boolean' }]);
+    if (wantsHelp(parsed)) return printLine(order.usage);
+    const ids = parsed.positionals;
+    if (ids.length === 0 && flagBoolean(parsed.flags, 'replace')) {
+      throw new UsageError('--replace needs the review ids, in order');
+    }
+    // No ids: show it. Ids: put them on top in that order, or make them the whole order (--replace).
+    const result =
+      ids.length === 0
+        ? await client.getReviewOrder()
+        : await client.setReviewOrder({ reviewIds: [...ids], mode: flagBoolean(parsed.flags, 'replace') ? 'replace' : 'first' });
+    if (maybePrintJson(parsed, result)) return;
+    const unknown = ids.filter((id) => !result.reviewIds.includes(id));
+    if (unknown.length > 0) printLine(`skipped (no such review, or archived): ${unknown.join(', ')}`);
+    if (result.reviewIds.length === 0) {
+      printLine('no custom order yet — Homebase shows reviews lightest first until one is set');
+      return;
+    }
+    const branches = new Map((await client.listReviews()).reviews.map((r) => [r.id, r.branch ?? '(detached)'] as const));
+    printTable(
+      ['#', 'ID', 'BRANCH'],
+      result.reviewIds.map((id, i) => [String(i + 1), id, branches.get(id) ?? '']),
+    );
   },
 };

@@ -170,6 +170,20 @@ joinery react abc123 check --actor agent
 joinery react abc123 eyes --off --actor agent
 ```
 
+## Homebase's custom order
+
+`joinery order` prints the order Homebase's Currently reviewing list uses
+when the reader picks "Custom". `joinery order <id>...` puts those reviews on
+top, in that order, keeping the rest below; `--replace` makes the given ids
+the whole order. Reviews not in the order show above it; reviews of one
+stacked PR show together where the first of them is placed.
+
+```
+joinery order
+joinery order <reviewId> <reviewId>
+joinery order <reviewId>... --replace
+```
+
 ## Useful one-liners
 
 ```

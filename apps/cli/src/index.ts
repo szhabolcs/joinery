@@ -38,6 +38,7 @@ const leaves: Readonly<Record<string, Command>> = {
   'delete-comment': threads.deleteComment,
   revision: reviews.revision,
   viewed: reviews.viewed,
+  order: reviews.order,
   run: runCmd.run,
   serve: serveCmd.serve,
   update: updateCmd.update,

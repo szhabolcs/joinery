@@ -8,6 +8,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path';
 import { Hono } from 'hono';
 import {
   addRepoBodySchema,
+  api,
   blobQuerySchema,
   setAllViewedBodySchema,
   resolveAllThreadsBodySchema,
@@ -80,6 +81,7 @@ import {
 import { listDirs } from '../fs/dirs.ts';
 import { buildReviewSummaries, getMeCached, getStoredPulls, openPullDetail, readStacks } from '../homebase.ts';
 import { searchPullsCached } from '../pullSearchCache.ts';
+import { getReviewOrder, placeReviewsFirst, setReviewOrder } from '../reviewOrder.ts';
 import type { StoredCacheDeps } from '../storedCache.ts';
 import {
   blobSideSize,
@@ -433,6 +435,19 @@ export function buildRoutes(deps: RoutesDeps): Hono {
   });
 
   // --- reviews ---
+
+  // Before `/api/reviews/:id`, which would otherwise take "order" for an id.
+  app.get('/api/reviews/order', async (c) => {
+    return c.json({ reviewIds: await getReviewOrder(deps.db) });
+  });
+
+  app.put('/api/reviews/order', async (c) => {
+    const body = await parseBody(api.setReviewOrder.body, c);
+    const reviewIds =
+      body.mode === 'first' ? await placeReviewsFirst(deps.db, body.reviewIds) : await setReviewOrder(deps.db, body.reviewIds);
+    bus.changed('home');
+    return c.json({ reviewIds });
+  });
 
   app.get('/api/reviews', async (c) => {
     const query = parseQuery(listReviewsQuerySchema, c);

@@ -153,7 +153,10 @@ export function Header({ onOpenPalette }: { onOpenPalette: () => void }): React.
                   className="group inline-flex shrink-0 items-center gap-0.5 tabular-nums text-chrome-fg-subtle hover:text-chrome-fg hover:underline"
                 >
                   #{pull.number}
-                  <ArrowUpRight size={12} strokeWidth={1.5} aria-hidden className="opacity-0 group-hover:opacity-100" />
+                  {/* With a stack chevron right after the number, the arrow would only push it away. */}
+                  {stack === null && (
+                    <ArrowUpRight size={12} strokeWidth={1.5} aria-hidden className="opacity-0 group-hover:opacity-100" />
+                  )}
                 </a>
               </Hint>
             ) : (

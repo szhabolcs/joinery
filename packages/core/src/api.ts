@@ -541,6 +541,32 @@ export const api = {
     query: listReviewsQuerySchema,
     response: z.object({ reviews: z.array(reviewSchema), summaries: z.array(reviewSummarySchema) }),
   }),
+  /**
+   * Homebase's "Custom" order for Currently reviewing: review ids, top first.
+   * Reviews not listed show above the listed ones; archived and deleted
+   * reviews drop out.
+   */
+  getReviewOrder: def({
+    method: 'GET',
+    path: () => '/api/reviews/order',
+    body: undefined,
+    query: undefined,
+    response: z.object({ reviewIds: z.array(z.string()) }),
+  }),
+  /**
+   * Set the "Custom" order. `replace` (the default) makes `reviewIds` the
+   * whole order; `first` puts them on top, in this order, ahead of the rest.
+   */
+  setReviewOrder: def({
+    method: 'PUT',
+    path: () => '/api/reviews/order',
+    body: z.object({
+      reviewIds: z.array(z.string().min(1)).max(1000),
+      mode: z.enum(['replace', 'first']).default('replace'),
+    }),
+    query: undefined,
+    response: z.object({ reviewIds: z.array(z.string()) }),
+  }),
   createReview: def({
     method: 'POST',
     path: () => '/api/reviews',

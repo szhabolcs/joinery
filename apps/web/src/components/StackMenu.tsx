@@ -1,15 +1,16 @@
 /**
  * The review header's stack switcher: a chevron after the PR number that
- * lists every PR in the review's GitHub stack, bottom (the one on the
- * base) first, the order to review them in, with the current one ticked. Picking another opens its
- * review, creating a draft one for a PR nobody has opened yet.
+ * lists every PR in the review's GitHub stack the way GitHub draws it: the
+ * top of the stack first, down to the PR on the base, then the base branch
+ * itself, with the current one ticked. Picking another opens its review,
+ * creating a draft one for a PR nobody has opened yet.
  *
  * Only rendered when the server reported a stack (`useReviewStack`), which
  * it does only where the forge has a stacks feature.
  */
 import { Menu } from '@base-ui-components/react/menu';
 import type { PullStack, PullStackMember, PullState } from '@joinery/core';
-import { Check, ChevronDown, Layers } from 'lucide-react';
+import { Check, ChevronDown, CircleDot, Layers } from 'lucide-react';
 import { useState } from 'react';
 import { ApiError, callApi } from '../lib/apiClient.ts';
 import { goReview } from '../lib/router.ts';
@@ -63,10 +64,11 @@ export function StackMenu({
           <Menu.Popup className={`${MENU_POPUP_CLASS} w-80`}>
             <div className={`${POPUP_LABEL_CLASS} flex items-center gap-1.5`}>
               <Layers size={12} strokeWidth={1.75} aria-hidden />
-              Stack of {stack.pulls.length} on {stack.baseRefName}
+              Stack of {stack.pulls.length}
             </div>
             <Menu.RadioGroup value={current}>
-              {stack.pulls.map((member, i) => (
+              {/* Top of the stack first, as on GitHub; the base branch closes the list. */}
+              {[...stack.pulls].reverse().map((member) => (
                 <Menu.RadioItem
                   key={member.number}
                   value={member.number}
@@ -79,7 +81,6 @@ export function StackMenu({
                       <Check size={12} strokeWidth={2} className="text-chrome-accent" aria-hidden />
                     </Menu.RadioItemIndicator>
                   </Tick>
-                  <span className="w-3 shrink-0 text-right tabular-nums text-chrome-fg-subtle">{i + 1}</span>
                   <span className="shrink-0 tabular-nums text-chrome-fg-subtle">#{member.number}</span>
                   <span className={`min-w-0 flex-1 truncate ${member.state === 'open' || member.state === 'draft' ? '' : 'text-chrome-fg-muted'}`}>
                     {member.title ?? member.headRefName}
@@ -90,6 +91,13 @@ export function StackMenu({
                 </Menu.RadioItem>
               ))}
             </Menu.RadioGroup>
+            {/* Not a PR, so not an item: just where the stack sits. */}
+            <div className="flex h-7 items-center gap-2 px-2 text-chrome-fg-subtle">
+              <Tick>
+                <CircleDot size={11} strokeWidth={2} aria-hidden />
+              </Tick>
+              <span className="rounded bg-chrome-bg-hover px-1.5 font-mono text-micro text-chrome-fg-muted">{stack.baseRefName}</span>
+            </div>
           </Menu.Popup>
         </Menu.Positioner>
       </Menu.Portal>

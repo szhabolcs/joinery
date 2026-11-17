@@ -1,7 +1,7 @@
 /**
  * Homebase's view of GitHub stacked PRs: which stack (if any) a PR is in,
  * and folding a sorted list into units where a stack's members sit
- * together, bottom of the stack first (the order to review them in).
+ * together, top of the stack first (as GitHub draws it).
  *
  * A unit takes the place of its first member in the sorted list, so a stack
  * moves up or down with its lightest (or most recent) PR, and the list's
@@ -48,7 +48,7 @@ export interface ListUnit<T> {
 
 /**
  * Fold `sorted` into units. Members of one stack join the unit of whichever
- * came first and are ordered bottom to top; a stack with only one member in
+ * came first and are ordered top to bottom; a stack with only one member in
  * the list stays a lone item (its card still says where it sits).
  */
 export function groupByStack<T>(
@@ -82,26 +82,58 @@ export function groupByStack<T>(
     units.push(unit);
   }
   for (const unit of byStack.values()) {
-    unit.items.sort((a, b) => (slotOf(a)?.position ?? 0) - (slotOf(b)?.position ?? 0));
+    // Top of the stack first, as GitHub draws it.
+    unit.items.sort((a, b) => (slotOf(b)?.position ?? 0) - (slotOf(a)?.position ?? 0));
   }
   return units;
 }
 
 /**
- * `units` in the reader's own order: keys they placed keep their places;
- * anything new (a review picked up since) goes on top, in the list's sort
- * order, where it's noticed.
+ * `units` in the reader's own order. `order` is review ids, top first; a
+ * unit sits where its highest-placed review is, so a stack that forms
+ * takes the place its first member already had. Units with no placed
+ * review (one just picked up) go on top, in the list's sort order.
  */
-export function applyCustomOrder<T>(units: readonly ListUnit<T>[], order: readonly string[]): ListUnit<T>[] {
-  const rank = new Map(order.map((key, i) => [key, i] as const));
-  const fresh = units.filter((u) => !rank.has(u.key));
-  const placed = units.filter((u) => rank.has(u.key)).sort((a, b) => (rank.get(a.key) ?? 0) - (rank.get(b.key) ?? 0));
+export function applyCustomOrder<T>(
+  units: readonly ListUnit<T>[],
+  order: readonly string[],
+  idOf: (item: T) => string,
+): ListUnit<T>[] {
+  const rank = new Map(order.map((id, i) => [id, i] as const));
+  const rankOf = (unit: ListUnit<T>): number =>
+    Math.min(...unit.items.map((item) => rank.get(idOf(item)) ?? Number.POSITIVE_INFINITY));
+  const fresh = units.filter((u) => rankOf(u) === Number.POSITIVE_INFINITY);
+  const placed = units.filter((u) => rankOf(u) !== Number.POSITIVE_INFINITY).sort((a, b) => rankOf(a) - rankOf(b));
   return [...fresh, ...placed];
 }
 
-/** `keys` with `moved` taken out and put back at `to` (an index into the list without it). */
-export function moveKey(keys: readonly string[], moved: string, to: number): string[] {
-  const rest = keys.filter((k) => k !== moved);
-  const at = Math.max(0, Math.min(rest.length, to));
-  return [...rest.slice(0, at), moved, ...rest.slice(at)];
+/**
+ * The saved order after dropping the unit `moved` before or after `target`
+ * (both in `shown`, the units as displayed). Only the moved reviews change
+ * places: reviews not on screen right now keep theirs, so one that comes
+ * back later lands where it was. Unplaced units on screen (shown on top)
+ * are placed where they are first, so nothing jumps.
+ */
+export function moveInOrder<T>(
+  shown: readonly ListUnit<T>[],
+  order: readonly string[],
+  idOf: (item: T) => string,
+  moved: string,
+  target: string,
+  side: 'before' | 'after',
+): string[] {
+  const placed = new Set(order);
+  const idsOf = (key: string): string[] => shown.find((u) => u.key === key)?.items.map(idOf) ?? [];
+  const unplaced = shown.flatMap((u) => u.items.map(idOf)).filter((id) => !placed.has(id));
+  const movedIds = new Set(idsOf(moved));
+  const base = [...unplaced, ...order].filter((id) => !movedIds.has(id));
+  // The target shows where its first placed review is; anchor there, and
+  // for "after" skip only the target's own reviews that follow it directly.
+  const targetIds = new Set(idsOf(target));
+  let index = base.findIndex((id) => targetIds.has(id));
+  if (index === -1) return [...base, ...movedIds];
+  if (side === 'after') {
+    while (index < base.length && targetIds.has(base[index] ?? '')) index++;
+  }
+  return [...base.slice(0, index), ...movedIds, ...base.slice(index)];
 }

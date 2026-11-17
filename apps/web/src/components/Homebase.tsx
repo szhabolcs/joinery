@@ -45,7 +45,7 @@ import { personFrom } from '../lib/people.ts';
 import { pullUrl } from '../lib/pullUrl.ts';
 import { relativeTime } from '../lib/relativeTime.ts';
 import { useStoredState } from '../lib/storedState.ts';
-import { applyCustomOrder, groupByStack, indexStacks, stackSlotOf, type StackSlot } from '../lib/stacks.ts';
+import { applyCustomOrder, groupByStack, indexStacks, moveInOrder, stackSlotOf, type StackSlot } from '../lib/stacks.ts';
 import { useReorder, type ReorderRowProps } from '../lib/useReorder.ts';
 import { goReview, goSettings } from '../lib/router.ts';
 import { useHomeData, type HomeReview } from '../state/HomeData.tsx';
@@ -126,6 +126,8 @@ export function Homebase(): React.JSX.Element {
     pullsAvailable,
     pullsNotice,
     stacksByRepo,
+    reviewOrder,
+    setReviewOrder,
     me,
     loading,
     refreshing,
@@ -151,8 +153,6 @@ export function Homebase(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on the first load
   }, [loaded]);
   const [order, setOrder] = useStoredState<Order>(ORDER_KEY, 'effort');
-  // The reader's own order for "Custom": unit keys (a review, or a whole stack), top first.
-  const [customOrder, setCustomOrder] = useStoredState<readonly string[]>(CUSTOM_ORDER_KEY, []);
   const [onlyRequested, setOnlyRequested] = useStoredState(ONLY_REQUESTED_KEY, false);
   const [queueSort, setQueueSort] = useStoredState<QueueSort>(QUEUE_SORT_KEY, 'effort');
   const [hiddenRepoIds, setHiddenRepoIds] = useStoredState<readonly string[]>(QUEUE_HIDDEN_REPOS_KEY, []);
@@ -246,11 +246,12 @@ export function Homebase(): React.JSX.Element {
   // A stack's reviews sit together, as one row of the list (and one thing to drag).
   const units = useMemo(() => {
     const grouped = groupByStack(list, (hr) => stackSlotOf(stackIndex, hr.repo.id, hr.review.prNumber), (hr) => `review:${hr.review.id}`);
-    return order === 'custom' ? applyCustomOrder(grouped, customOrder) : grouped;
-  }, [list, stackIndex, order, customOrder]);
+    return order === 'custom' ? applyCustomOrder(grouped, reviewOrder, (hr) => hr.review.id) : grouped;
+  }, [list, stackIndex, order, reviewOrder]);
+  // The order lives on the server (shared with `joinery order`); a move changes only the moved reviews' places.
   const reorder = useReorder(
     units.map((u) => u.key),
-    setCustomOrder,
+    (moved, target, side) => void setReviewOrder(moveInOrder(units, reviewOrder, (hr) => hr.review.id, moved, target, side)),
     order === 'custom',
   );
 
@@ -448,11 +449,12 @@ export function Homebase(): React.JSX.Element {
                             order === 'custom'
                               ? { props: reorder.rowProps(unit.key), onMove: (delta: number) => reorder.move(unit.key, delta) }
                               : undefined;
-                          const cards = unit.items.map((r) => (
+                          const cards = unit.items.map((r, i) => (
                             <ReviewCard
                               key={r.review.id}
                               review={r}
                               stackSlot={reviewSlot(r)}
+                              stackLink={unit.stack === null ? undefined : { below: i < unit.items.length - 1 }}
                               reorder={unit.stack === null ? handle : undefined}
                               onGenerateReadingOrder={generateReadingOrder}
                               onArchive={archiveReview}
@@ -467,7 +469,7 @@ export function Homebase(): React.JSX.Element {
                               shown={unit.items.length}
                               repoName={queueRepoName(unit.stack.repoId)}
                               reorder={handle}
-                              rail="ml-4"
+                              spine={REVIEW_SPINE}
                             >
                               {cards}
                             </StackGroup>
@@ -546,7 +548,7 @@ export function Homebase(): React.JSX.Element {
                     ) : (
                       <ul className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pt-1 pb-2">
                         {queueUnits.map((unit) => {
-                          const rows = unit.items.map((item) => {
+                          const rows = unit.items.map((item, i) => {
                             const key = `${item.repoId}:${String(item.pull.number)}`;
                             return (
                               <QueueRow
@@ -555,6 +557,7 @@ export function Homebase(): React.JSX.Element {
                                 repoId={item.repoId}
                                 pull={item.pull}
                                 stackSlot={queueSlot(item)}
+                                stackLink={unit.stack === null ? undefined : { below: i < unit.items.length - 1 }}
                                 opening={openingKeys.has(key)}
                                 onOpen={handleOpenPull}
                               />
@@ -568,7 +571,7 @@ export function Homebase(): React.JSX.Element {
                               slot={unit.stack}
                               shown={unit.items.length}
                               repoName={queueRepoName(unit.stack.repoId)}
-                              rail="ml-3 pl-1"
+                              spine={QUEUE_SPINE}
                               itemGap
                             >
                               {rows}
@@ -631,7 +634,6 @@ const TOPBAR_FADE = `linear-gradient(to bottom, ${[
   .join(', ')})`;
 
 const ORDER_KEY = 'joinery.reviewing.order';
-const CUSTOM_ORDER_KEY = 'joinery.reviewing.custom-order';
 const ONLY_REQUESTED_KEY = 'joinery.queue.only-requested';
 const QUEUE_SORT_KEY = 'joinery.queue.sort';
 const QUEUE_HIDDEN_REPOS_KEY = 'joinery.queue.hidden-repos';
@@ -679,15 +681,42 @@ function StackPosition({ slot }: { slot: StackSlot }): React.JSX.Element {
 }
 
 /**
- * Two or more PRs of one stack, together under a one-line header, bottom
- * of the stack first. In the "Custom" order the whole group drags as one.
+ * Where a list's avatars sit, so a stack's line can run through their
+ * centres: `x` is the avatar's centre from the row's left edge, `top` and
+ * `size` its box, `gap` the space between two rows.
+ */
+interface Spine {
+  x: number;
+  top: number;
+  size: number;
+  gap: number;
+}
+const REVIEW_SPINE: Spine = { x: 32, top: 12, size: 32, gap: 0 };
+const QUEUE_SPINE: Spine = { x: 24, top: 14, size: 24, gap: 4 };
+const SPINE_CLASS = 'pointer-events-none absolute w-px -translate-x-1/2 bg-chrome-border-strong';
+
+/** A stacked PR's link in the line through its stack's avatars: from the row above into its avatar, and on down when another follows. */
+function StackLine({ spine, below }: { spine: Spine; below: boolean }): React.JSX.Element {
+  return (
+    <>
+      <span aria-hidden className={SPINE_CLASS} style={{ left: spine.x, top: -spine.gap, height: spine.top + spine.gap }} />
+      {below && <span aria-hidden className={SPINE_CLASS} style={{ left: spine.x, top: spine.top + spine.size, bottom: 0 }} />}
+    </>
+  );
+}
+
+/**
+ * Two or more PRs of one stack, together under a one-line header, top of
+ * the stack first, as on GitHub. A line runs from the header's stack icon down
+ * through the members' avatars, so the group reads as one chain without
+ * indenting it. In the "Custom" order the whole group drags as one.
  */
 function StackGroup({
   slot,
   shown,
   repoName,
   reorder,
-  rail,
+  spine,
   itemGap = false,
   children,
 }: {
@@ -696,25 +725,27 @@ function StackGroup({
   shown: number;
   repoName: string;
   reorder?: RowReorder | undefined;
-  /** The indent of the members' rail. */
-  rail: string;
+  spine: Spine;
   /** Space the members apart (the queue's rows are separate tiles). */
   itemGap?: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
   const label = `stack of ${String(slot.size)} on ${slot.stack.baseRefName}`;
+  const count = shown === slot.size ? `${String(slot.size)} pull requests` : `${String(shown)} of ${String(slot.size)} pull requests`;
   return (
-    <li {...reorder?.props} className={`group/stack relative ${DROP_CLASS}`} aria-label={`Stacked pull requests, ${label}`}>
-      <div className="group relative flex h-7 items-center gap-1.5 pr-4 pl-4 text-micro text-chrome-fg-subtle">
+    <li {...reorder?.props} className={`relative ${DROP_CLASS}`} aria-label={`Stacked pull requests, ${label}`}>
+      {/* The icon is centred over the avatars below it, where the line starts. */}
+      <div className="group relative flex h-8 items-center gap-2 pr-4 text-micro text-chrome-fg-subtle" style={{ paddingLeft: spine.x - 7 }}>
         {reorder !== undefined && <ReorderGrip label={label} onMove={reorder.onMove} />}
-        <Layers size={12} strokeWidth={1.75} aria-hidden />
-        <span className="font-medium text-chrome-fg-muted">Stack</span>
-        <span className="tabular-nums">{shown === slot.size ? `${String(slot.size)} pull requests` : `${String(shown)} of ${String(slot.size)} pull requests`}</span>
+        <Layers size={14} strokeWidth={1.75} className="shrink-0 text-chrome-fg-muted" aria-hidden />
+        <span className="shrink-0 font-medium text-chrome-fg-muted">Stack</span>
+        <span className="shrink-0 tabular-nums">{count}</span>
         <span className="truncate">
           {repoName} · on {slot.stack.baseRefName}
         </span>
+        <span aria-hidden className={SPINE_CLASS} style={{ left: spine.x, top: 23, bottom: 0 }} />
       </div>
-      <ul className={`${rail} border-l border-chrome-border ${itemGap ? 'flex flex-col gap-1' : 'divide-y divide-chrome-border'}`}>{children}</ul>
+      <ul className={itemGap ? 'flex flex-col gap-1' : 'divide-y divide-chrome-border'}>{children}</ul>
     </li>
   );
 }
@@ -722,12 +753,15 @@ function StackGroup({
 function ReviewCard({
   review: hr,
   stackSlot,
+  stackLink,
   reorder,
   onGenerateReadingOrder,
   onArchive,
 }: {
   review: HomeReview;
   stackSlot: StackSlot | null;
+  /** Set inside a stack group: draw the stack's line through this avatar. */
+  stackLink?: { below: boolean } | undefined;
   /** Set in the "Custom" order when this card is a row of its own. */
   reorder?: RowReorder | undefined;
   onGenerateReadingOrder: (id: string, model: AgentModel) => Promise<void>;
@@ -745,6 +779,7 @@ function ReviewCard({
     <li {...reorder?.props} className={`group relative transition-colors hover:bg-chrome-bg-hover ${DROP_CLASS}`}>
       <button type="button" onClick={() => goReview(review.id)} aria-label={`Open ${title}`} className="absolute inset-0" />
       {reorder !== undefined && <ReorderGrip label={title} onMove={reorder.onMove} />}
+      {stackLink !== undefined && <StackLine spine={REVIEW_SPINE} below={stackLink.below} />}
       <div className="pointer-events-none relative flex items-stretch gap-4 px-4 py-3">
         <Avatar person={author} size={32} />
 
@@ -930,6 +965,7 @@ function QueueRow({
   repoName,
   pull: p,
   stackSlot,
+  stackLink,
   opening,
   onOpen,
 }: {
@@ -937,6 +973,7 @@ function QueueRow({
   repoName: string;
   pull: Pull;
   stackSlot: StackSlot | null;
+  stackLink?: { below: boolean } | undefined;
   opening: boolean;
   onOpen: (repoId: string, pull: Pull) => void;
 }): React.JSX.Element {
@@ -947,7 +984,8 @@ function QueueRow({
   if (p.reviewRequested) flags.push(<Chip key="req" tone="accent">Review requested</Chip>);
   if (p.reviewStatus === 'draft') flags.push(<Chip key="opened">opened</Chip>);
   return (
-    <li>
+    <li className="relative">
+      {stackLink !== undefined && <StackLine spine={QUEUE_SPINE} below={stackLink.below} />}
       {/* Three fixed columns — avatar, text, effort — so every row lines
           up: title on the first line, facts on the second, flags (if any)
           on a third. Nothing floats to the right except the effort. */}

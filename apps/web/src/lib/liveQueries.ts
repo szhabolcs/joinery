@@ -30,6 +30,7 @@ export const queryKeys = {
   repos: ['home', 'repos'] as const,
   me: ['home', 'me'] as const,
   reviews: ['home', 'reviews'] as const,
+  reviewOrder: ['home', 'review-order'] as const,
   pulls: (repoId: string) => ['home', 'pulls', repoId] as const,
   review: (reviewId: string) => ['review', reviewId] as const,
   reviewPull: (reviewId: string) => ['review', reviewId, 'pull'] as const,
