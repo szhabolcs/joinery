@@ -47,6 +47,7 @@ import { relativeTime } from '../lib/relativeTime.ts';
 import { useStoredState } from '../lib/storedState.ts';
 import { applyCustomOrder, groupByStack, indexStacks, moveInOrder, stackSlotOf, type StackSlot } from '../lib/stacks.ts';
 import { useReorder, type ReorderRowProps } from '../lib/useReorder.ts';
+import { StackPillContent } from './StackPill.tsx';
 import { goReview, goSettings } from '../lib/router.ts';
 import { useHomeData, type HomeReview } from '../state/HomeData.tsx';
 import { useTheme } from '../state/ThemeContext.tsx';
@@ -449,12 +450,11 @@ export function Homebase(): React.JSX.Element {
                             order === 'custom'
                               ? { props: reorder.rowProps(unit.key), onMove: (delta: number) => reorder.move(unit.key, delta) }
                               : undefined;
-                          const cards = unit.items.map((r, i) => (
+                          const cards = unit.items.map((r) => (
                             <ReviewCard
                               key={r.review.id}
                               review={r}
                               stackSlot={reviewSlot(r)}
-                              stackLink={unit.stack === null ? undefined : { below: i < unit.items.length - 1 }}
                               reorder={unit.stack === null ? handle : undefined}
                               onGenerateReadingOrder={generateReadingOrder}
                               onArchive={archiveReview}
@@ -466,10 +466,9 @@ export function Homebase(): React.JSX.Element {
                             <StackGroup
                               key={unit.key}
                               slot={unit.stack}
-                              shown={unit.items.length}
-                              repoName={queueRepoName(unit.stack.repoId)}
                               reorder={handle}
-                              spine={REVIEW_SPINE}
+                              inset="pl-4"
+                              edge="left-0"
                             >
                               {cards}
                             </StackGroup>
@@ -548,7 +547,7 @@ export function Homebase(): React.JSX.Element {
                     ) : (
                       <ul className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pt-1 pb-2">
                         {queueUnits.map((unit) => {
-                          const rows = unit.items.map((item, i) => {
+                          const rows = unit.items.map((item) => {
                             const key = `${item.repoId}:${String(item.pull.number)}`;
                             return (
                               <QueueRow
@@ -557,8 +556,7 @@ export function Homebase(): React.JSX.Element {
                                 repoId={item.repoId}
                                 pull={item.pull}
                                 stackSlot={queueSlot(item)}
-                                stackLink={unit.stack === null ? undefined : { below: i < unit.items.length - 1 }}
-                                opening={openingKeys.has(key)}
+                                  opening={openingKeys.has(key)}
                                 onOpen={handleOpenPull}
                               />
                             );
@@ -569,9 +567,8 @@ export function Homebase(): React.JSX.Element {
                             <StackGroup
                               key={unit.key}
                               slot={unit.stack}
-                              shown={unit.items.length}
-                              repoName={queueRepoName(unit.stack.repoId)}
-                              spine={QUEUE_SPINE}
+                              inset="-mx-2 pl-5"
+                              edge="-left-2"
                               itemGap
                             >
                               {rows}
@@ -649,7 +646,16 @@ const DROP_CLASS =
   'data-[drop=before]:shadow-[inset_0_2px_0_var(--chrome-accent)] data-[drop=after]:shadow-[inset_0_-2px_0_var(--chrome-accent)] data-dragging:opacity-50';
 
 /** The drag handle at a row's left edge; ↑/↓ on it moves the row without a mouse. */
-function ReorderGrip({ label, onMove }: { label: string; onMove: (delta: number) => void }): React.JSX.Element {
+function ReorderGrip({
+  label,
+  onMove,
+  place = 'left-0.5',
+}: {
+  label: string;
+  onMove: (delta: number) => void;
+  /** Where it sits along the row; a stack's bracket takes the left edge, so its grip goes to the right. */
+  place?: string;
+}): React.JSX.Element {
   return (
     <Hint label="Drag to reorder, or use ↑ and ↓">
       <button
@@ -660,7 +666,7 @@ function ReorderGrip({ label, onMove }: { label: string; onMove: (delta: number)
           e.preventDefault();
           onMove(e.key === 'ArrowUp' ? -1 : 1);
         }}
-        className="pointer-events-auto absolute top-1/2 left-0.5 flex h-6 w-3 -translate-y-1/2 cursor-grab items-center justify-center rounded text-chrome-fg-subtle opacity-0 transition-opacity group-hover:opacity-100 hover:text-chrome-fg focus-visible:opacity-100 active:cursor-grabbing"
+        className={`pointer-events-auto absolute top-1/2 ${place} flex h-6 w-3 -translate-y-1/2 cursor-grab items-center justify-center rounded text-chrome-fg-subtle opacity-0 transition-opacity group-hover:opacity-100 hover:text-chrome-fg focus-visible:opacity-100 active:cursor-grabbing`}
       >
         <GripVertical size={12} strokeWidth={1.75} aria-hidden />
       </button>
@@ -668,82 +674,58 @@ function ReorderGrip({ label, onMove }: { label: string; onMove: (delta: number)
   );
 }
 
-/** Where a PR sits in its stack, after its number: "2/3". */
+/** Where a PR sits in its stack, after its number: "2/3", plain like the PR number beside it. */
 function StackPosition({ slot }: { slot: StackSlot }): React.JSX.Element {
   return (
     <Hint label={`${String(slot.position)} of ${String(slot.size)} in a stack on ${slot.stack.baseRefName}`}>
       <span className="pointer-events-auto flex shrink-0 items-center gap-0.5 text-micro tabular-nums text-chrome-fg-subtle">
-        <Layers size={11} strokeWidth={2} aria-hidden />
-        {slot.position}/{slot.size}
+        <StackPillContent position={slot.position} size={slot.size} />
       </span>
     </Hint>
   );
 }
 
 /**
- * Where a list's avatars sit, so a stack's line can run through their
- * centres: `x` is the avatar's centre from the row's left edge, `top` and
- * `size` its box, `gap` the space between two rows.
- */
-interface Spine {
-  x: number;
-  top: number;
-  size: number;
-  gap: number;
-}
-const REVIEW_SPINE: Spine = { x: 32, top: 12, size: 32, gap: 0 };
-const QUEUE_SPINE: Spine = { x: 24, top: 14, size: 24, gap: 4 };
-const SPINE_CLASS = 'pointer-events-none absolute w-px -translate-x-1/2 bg-chrome-border-strong';
-
-/** A stacked PR's link in the line through its stack's avatars: from the row above into its avatar, and on down when another follows. */
-function StackLine({ spine, below }: { spine: Spine; below: boolean }): React.JSX.Element {
-  return (
-    <>
-      <span aria-hidden className={SPINE_CLASS} style={{ left: spine.x, top: -spine.gap, height: spine.top + spine.gap }} />
-      {below && <span aria-hidden className={SPINE_CLASS} style={{ left: spine.x, top: spine.top + spine.size, bottom: 0 }} />}
-    </>
-  );
-}
-
-/**
- * Two or more PRs of one stack, together under a one-line header, top of
- * the stack first, as on GitHub. A line runs from the header's stack icon down
- * through the members' avatars, so the group reads as one chain without
- * indenting it. In the "Custom" order the whole group drags as one.
+ * Two or more PRs of one stack, together under a slight "Stack" header,
+ * top of the stack first as on GitHub, with a slightly heavier left edge
+ * along their rows; each card's "2/4" says where it sits. In the "Custom" order the whole group drags as one.
  */
 function StackGroup({
   slot,
-  shown,
-  repoName,
   reorder,
-  spine,
+  inset,
+  edge,
   itemGap = false,
   children,
 }: {
   slot: StackSlot;
-  /** How many of the stack's PRs are in this list. */
-  shown: number;
-  repoName: string;
   reorder?: RowReorder | undefined;
-  spine: Spine;
+  /** The header's left padding (and, in a padded list, its bleed to the panel's edges), lining its icon up with the avatars below. */
+  inset: string;
+  /** Where the left edge bar sits: the panel's own left edge, whatever padding the list has. */
+  edge: string;
   /** Space the members apart (the queue's rows are separate tiles). */
   itemGap?: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
   const label = `stack of ${String(slot.size)} on ${slot.stack.baseRefName}`;
-  const count = shown === slot.size ? `${String(slot.size)} pull requests` : `${String(shown)} of ${String(slot.size)} pull requests`;
   return (
-    <li {...reorder?.props} className={`relative ${DROP_CLASS}`} aria-label={`Stacked pull requests, ${label}`}>
-      {/* The icon is centred over the avatars below it, where the line starts. */}
-      <div className="group relative flex h-8 items-center gap-2 pr-4 text-micro text-chrome-fg-subtle" style={{ paddingLeft: spine.x - 7 }}>
-        {reorder !== undefined && <ReorderGrip label={label} onMove={reorder.onMove} />}
-        <Layers size={14} strokeWidth={1.75} className="shrink-0 text-chrome-fg-muted" aria-hidden />
-        <span className="shrink-0 font-medium text-chrome-fg-muted">Stack</span>
-        <span className="shrink-0 tabular-nums">{count}</span>
-        <span className="truncate">
-          {repoName} · on {slot.stack.baseRefName}
-        </span>
-        <span aria-hidden className={SPINE_CLASS} style={{ left: spine.x, top: 23, bottom: 0 }} />
+    <li {...reorder?.props} className={`group relative ${DROP_CLASS}`} aria-label={`Stacked pull requests, ${label}`}>
+      {/* A faint left bar from under the header down the stack's rows, so they read as one set; drawn over the rows, so nothing shifts.
+          It meets the header in a soft inner corner (a fillet cut by a radial gradient). Starting below the header keeps the
+          translucent tint from doubling up where the two would overlap. */}
+      <span aria-hidden className={`pointer-events-none absolute top-7 bottom-0 z-10 ${edge}`}>
+        <span className="absolute inset-y-0 left-0 w-[3px] bg-chrome-bg-active" />
+        <span
+          className="absolute top-0 left-[3px] size-1.5"
+          style={{ background: 'radial-gradient(circle at 100% 100%, transparent 5.5px, var(--chrome-bg-active) 6px)' }}
+        />
+      </span>
+      {/* The header shares the bar's faint tint, so bar and header read as one marker. */}
+      <div className={`relative flex h-7 items-center gap-1.5 rounded-tl-[6px] bg-chrome-bg-active pr-4 text-micro text-chrome-fg-muted ${inset}`}>
+        {reorder !== undefined && <ReorderGrip label={label} onMove={reorder.onMove} place="right-1" />}
+        <Layers size={12} strokeWidth={1.75} className="shrink-0" aria-hidden />
+        <span className="font-medium">Stack</span>
       </div>
       <ul className={itemGap ? 'flex flex-col gap-1' : 'divide-y divide-chrome-border'}>{children}</ul>
     </li>
@@ -753,15 +735,12 @@ function StackGroup({
 function ReviewCard({
   review: hr,
   stackSlot,
-  stackLink,
   reorder,
   onGenerateReadingOrder,
   onArchive,
 }: {
   review: HomeReview;
   stackSlot: StackSlot | null;
-  /** Set inside a stack group: draw the stack's line through this avatar. */
-  stackLink?: { below: boolean } | undefined;
   /** Set in the "Custom" order when this card is a row of its own. */
   reorder?: RowReorder | undefined;
   onGenerateReadingOrder: (id: string, model: AgentModel) => Promise<void>;
@@ -779,7 +758,6 @@ function ReviewCard({
     <li {...reorder?.props} className={`group relative transition-colors hover:bg-chrome-bg-hover ${DROP_CLASS}`}>
       <button type="button" onClick={() => goReview(review.id)} aria-label={`Open ${title}`} className="absolute inset-0" />
       {reorder !== undefined && <ReorderGrip label={title} onMove={reorder.onMove} />}
-      {stackLink !== undefined && <StackLine spine={REVIEW_SPINE} below={stackLink.below} />}
       <div className="pointer-events-none relative flex items-stretch gap-4 px-4 py-3">
         <Avatar person={author} size={32} />
 
@@ -965,7 +943,6 @@ function QueueRow({
   repoName,
   pull: p,
   stackSlot,
-  stackLink,
   opening,
   onOpen,
 }: {
@@ -973,7 +950,6 @@ function QueueRow({
   repoName: string;
   pull: Pull;
   stackSlot: StackSlot | null;
-  stackLink?: { below: boolean } | undefined;
   opening: boolean;
   onOpen: (repoId: string, pull: Pull) => void;
 }): React.JSX.Element {
@@ -984,8 +960,7 @@ function QueueRow({
   if (p.reviewRequested) flags.push(<Chip key="req" tone="accent">Review requested</Chip>);
   if (p.reviewStatus === 'draft') flags.push(<Chip key="opened">opened</Chip>);
   return (
-    <li className="relative">
-      {stackLink !== undefined && <StackLine spine={QUEUE_SPINE} below={stackLink.below} />}
+    <li>
       {/* Three fixed columns — avatar, text, effort — so every row lines
           up: title on the first line, facts on the second, flags (if any)
           on a third. Nothing floats to the right except the effort. */}

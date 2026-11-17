@@ -153,20 +153,18 @@ export function Header({ onOpenPalette }: { onOpenPalette: () => void }): React.
                   className="group inline-flex shrink-0 items-center gap-0.5 tabular-nums text-chrome-fg-subtle hover:text-chrome-fg hover:underline"
                 >
                   #{pull.number}
-                  {/* With a stack chevron right after the number, the arrow would only push it away. */}
-                  {stack === null && (
-                    <ArrowUpRight size={12} strokeWidth={1.5} aria-hidden className="opacity-0 group-hover:opacity-100" />
-                  )}
+                  <ArrowUpRight size={12} strokeWidth={1.5} aria-hidden className="opacity-0 group-hover:opacity-100" />
                 </a>
               </Hint>
             ) : (
               <span className="shrink-0 tabular-nums text-chrome-fg-subtle">#{pull.number}</span>
             ))}
-          {stack !== null && review?.prNumber != null && repo != null && (
-            <StackMenu stack={stack} repoId={repo.id} current={review.prNumber} />
-          )}
         </div>
       </Hint>
+      {/* Outside the breadcrumb's hint: focus coming back from the menu would open that hint. */}
+      {stack !== null && review?.prNumber != null && repo != null && (
+        <StackMenu stack={stack} repoId={repo.id} current={review.prNumber} />
+      )}
 
       {/* Nothing left to start on once the branch has landed. */}
       {(review?.status === 'draft' || review?.status === 'archived') && reviewState?.merged !== true && (
