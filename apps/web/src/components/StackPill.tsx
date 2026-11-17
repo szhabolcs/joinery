@@ -7,7 +7,7 @@
 import { Layers } from 'lucide-react';
 
 export const STACK_PILL_CLASS =
-  'inline-flex h-5 shrink-0 items-center gap-1 rounded-full border border-chrome-border-strong px-1.5 text-micro font-medium tabular-nums text-chrome-fg-muted';
+  'inline-flex h-6 shrink-0 items-center gap-1.5 rounded-full border border-chrome-border-strong px-2.5 text-micro font-medium tabular-nums text-chrome-fg-muted';
 
 export function StackPillContent({ position, size }: { position: number; size: number }): React.JSX.Element {
   return (

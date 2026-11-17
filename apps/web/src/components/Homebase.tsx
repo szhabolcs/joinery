@@ -714,7 +714,7 @@ function StackGroup({
       {/* A faint left bar from under the header down the stack's rows, so they read as one set; drawn over the rows, so nothing shifts.
           It meets the header in a soft inner corner (a fillet cut by a radial gradient). Starting below the header keeps the
           translucent tint from doubling up where the two would overlap. */}
-      <span aria-hidden className={`pointer-events-none absolute top-7 bottom-0 z-10 ${edge}`}>
+      <span aria-hidden className={`pointer-events-none absolute top-6 bottom-0 z-10 ${edge}`}>
         <span className="absolute inset-y-0 left-0 w-[3px] bg-chrome-bg-active" />
         <span
           className="absolute top-0 left-[3px] size-1.5"
@@ -722,7 +722,7 @@ function StackGroup({
         />
       </span>
       {/* The header shares the bar's faint tint, so bar and header read as one marker. */}
-      <div className={`relative flex h-7 items-center gap-1.5 rounded-tl-[6px] bg-chrome-bg-active pr-4 text-micro text-chrome-fg-muted ${inset}`}>
+      <div className={`relative flex h-6 items-center gap-1.5 rounded-tl-[6px] bg-chrome-bg-active pr-4 text-micro text-chrome-fg-muted ${inset}`}>
         {reorder !== undefined && <ReorderGrip label={label} onMove={reorder.onMove} place="right-1" />}
         <Layers size={12} strokeWidth={1.75} className="shrink-0" aria-hidden />
         <span className="font-medium">Stack</span>
